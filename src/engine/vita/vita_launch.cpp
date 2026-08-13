@@ -2,8 +2,6 @@
 
 #include <psp2/io/dirent.h>
 #include <psp2/io/stat.h>
-#include <psp2/notificationutil.h>
-#include <psp2/sysmodule.h>
 
 #include <algorithm>
 #include <cctype>
@@ -120,25 +118,8 @@ std::string discover_single_game()
 
 void report_launch_error(const std::string &message)
 {
-	sceIoMkdir("ux0:data/krkrvita", 0777);
-	FILE *file = std::fopen("ux0:data/krkrvita/error.txt", "wb");
-	if(!file) file = std::fopen("ux0:data/krkrvita-error.txt", "wb");
-	if(file)
-	{
-		std::fprintf(file, "%s\n", message.c_str());
-		std::fclose(file);
-	}
-	if(sceSysmoduleLoadModule(SCE_SYSMODULE_NOTIFICATION_UTIL) >= 0)
-	{
-		SceWChar16 text[0x208]{};
-		const std::string prefix = "Kirikiri Vita: ";
-		const std::string shown = prefix + message;
-		const std::size_t count = std::min<std::size_t>(shown.size(), 0x206);
-		for(std::size_t i = 0; i < count; ++i)
-			text[i] = static_cast<unsigned char>(shown[i]);
-		sceNotificationUtilSendNotification(text);
-		sceSysmoduleUnloadModule(SCE_SYSMODULE_NOTIFICATION_UTIL);
-	}
+	krkrvita_write_error(message.c_str());
+	krkrvita_boot_trace("fatal-error-written");
 }
 
 } // namespace

@@ -53,3 +53,10 @@ Install `build-vita-engine/krkrsdl2.vpk`, copy the untouched game directory to
 `ux0:data/krkrvita/games/色情教団`, and copy the contents of
 `.cache/vita-stage` into `ux0:data/krkrvita`. Direct bubbles are currently
 disabled pending safe hardware validation of their SFO and uninstall path.
+
+Upstream VitaGL requires `ur0:/data/libshacccg.suprx`; install it legally with
+ShaRKBR33D or VitaDB Downloader. Engine build `01.03` checks this before VitaGL
+startup. It also recreates `ux0:data/krkrvita/boot-status.txt` from a
+pre-constructor hook and uses raw Vita I/O for `error.txt`, so a launch that
+returns to LiveArea can be assigned to the loader, constructors, engine, or
+renderer without depending on the normal Kirikiri logger.

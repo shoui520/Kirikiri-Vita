@@ -1,6 +1,8 @@
 #include "krkrvita/vitagl_presenter.hpp"
+#include "krkrvita/retail_bootstrap.hpp"
 
 #include <vitaGL.h>
+#include <psp2/io/stat.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -20,6 +22,12 @@ int texture_width = 0;
 int texture_height = 0;
 std::vector<std::uint8_t> tightly_packed;
 
+bool shader_compiler_available() {
+    SceIoStat status{};
+    return sceIoGetstat("ur0:/data/libshacccg.suprx", &status) >= 0 ||
+           sceIoGetstat("ur0:data/external/libshacccg.suprx", &status) >= 0;
+}
+
 void configure_2d() {
     glViewport(0, 0, kScreenWidth, kScreenHeight);
     glMatrixMode(GL_PROJECTION);
@@ -36,10 +44,20 @@ void configure_2d() {
 
 bool krkrvita_vitagl_initialize() {
     if (initialized) return true;
-    if (!vglInitExtended(0, kScreenWidth, kScreenHeight, kVitaGlMemory,
-                         SCE_GXM_MULTISAMPLE_NONE)) {
+    krkrvita_boot_trace("vitagl-init-entered");
+    if (!shader_compiler_available()) {
+        krkrvita_report_launch_error(
+            "VitaGL requires ur0:/data/libshacccg.suprx. Install it with "
+            "ShaRKBR33D or VitaDB Downloader, then launch Kirikiri Vita again.");
         return false;
     }
+    krkrvita_boot_trace("vitagl-shader-compiler-found");
+    if (!vglInitExtended(0, kScreenWidth, kScreenHeight, kVitaGlMemory,
+                         SCE_GXM_MULTISAMPLE_NONE)) {
+        krkrvita_report_launch_error("VitaGL initialization failed.");
+        return false;
+    }
+    krkrvita_boot_trace("vitagl-initialized");
     initialized = true;
     configure_2d();
     glGenTextures(1, &texture);

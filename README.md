@@ -32,6 +32,11 @@ The script applies the idempotent patches in `patches/` to pinned recursive
 submodules and produces `build-vita-engine/krkrsdl2.vpk`. Do not configure the
 old root Vita target; the wholesale engine target is the product runtime.
 
+The Vita must have `ur0:/data/libshacccg.suprx`, as required by upstream
+VitaGL. Install it legally with ShaRKBR33D or VitaDB Downloader before launching
+Kirikiri Vita. The runtime checks for it before initializing VitaGL and writes a
+specific error instead of entering the renderer when it is absent.
+
 To prepare a retail directory without modifying it:
 
 ```sh
@@ -45,6 +50,16 @@ Copy the game to the printed `game_copy_to` path and copy the contents of
 manifest, resolves the game, downloads its complete supported bundle, verifies
 `xp3filter.tjs` against the game's XP3 data, and writes both the active and
 stable per-game profiles.
+
+For a single game, the central application can also boot an untouched directory
+placed directly below `ux0:data/krkrvita/games`. It prefers a game-local
+`xp3filter.tjs`, then uses the bundled common hash-XOR filter. A staged profile
+remains the route for automatically selected game-specific filters and patches.
+
+Every launch recreates `ux0:data/krkrvita/boot-status.txt` before C++ global
+constructors run. Fatal startup errors are written with raw Vita I/O to
+`ux0:data/krkrvita/error.txt`; both files have root-level fallback names below
+`ux0:data` if the application directory cannot be opened.
 
 Direct-bubble packaging is disabled until its SFO and installation lifecycle
 have passed hardware validation. Do not install previously generated direct

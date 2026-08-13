@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 9503505..14f0322 100644
+index 9503505..8c02ca7 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -637,6 +637,61 @@ if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.13.0")
@@ -26,6 +26,7 @@ index 9503505..14f0322 100644
 +file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/krkrvita-generated/xp3filter.cpp"
 +	"${KRKRVITA_XP3FILTER_SOURCE}")
 +target_sources(${KRKRSDL2_NAME} PRIVATE
++	${KRKRVITA_OVERLAY_DIR}/src/engine/vita/early_boot_trace.c
 +	${KRKRVITA_OVERLAY_DIR}/src/engine/vita/vitagl_presenter.cpp
 +	${KRKRVITA_OVERLAY_DIR}/src/engine/vita/VitaPvfFontRasterizer.cpp
 +	${KRKRVITA_OVERLAY_DIR}/src/engine/vita/vita_input_bridge.cpp
@@ -58,7 +59,6 @@ index 9503505..14f0322 100644
 +	vitaGL vitashark SceShaccCgExt SceShaccCg_stub taihen_stub mathneon
 +	SceKernelDmacMgr_stub
 +	ScePvf_stub
-+	SceNotificationUtil_stub
 +)
 +endif()
  if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.16.0")
@@ -421,7 +421,7 @@ index 48c7820..a0c6563 100644
  	return ::operator new(size, alignment);
  }
 diff --git a/src/core/sdl2/SDLEntrypoint.cpp b/src/core/sdl2/SDLEntrypoint.cpp
-index a4453a9..39d5a79 100644
+index a4453a9..6c55a9b 100644
 --- a/src/core/sdl2/SDLEntrypoint.cpp
 +++ b/src/core/sdl2/SDLEntrypoint.cpp
 @@ -3,9 +3,15 @@
@@ -440,18 +440,53 @@ index a4453a9..39d5a79 100644
  
  #if defined(USE_SDL_MAIN)
  extern "C" int SDL_main(int argc, char **argv)
-@@ -19,6 +25,10 @@ extern "C" int main(int argc, char **argv)
+@@ -15,30 +21,74 @@ extern "C" int wmain(int argc, wchar_t **argv)
+ extern "C" int main(int argc, char **argv)
+ #endif
+ {
++#ifdef KRKRVITA_RETAIL
++	krkrvita_boot_trace("main-entered");
++#endif
+ 	try
  	{
  		krkrsdl2_pre_init_platform();
- 
 +#ifdef KRKRVITA_RETAIL
-+		krkrvita_resolve_launch(argc, argv);
++		krkrvita_boot_trace("platform-preinit-complete");
 +#endif
 +
++#ifdef KRKRVITA_RETAIL
++		krkrvita_resolve_launch(argc, argv);
++		krkrvita_boot_trace("retail-launch-resolved");
++#endif
+ 
  #if defined(_WIN32) && defined(_UNICODE)
  		krkrsdl2_set_args(argc, argv);
  #else
-@@ -37,8 +47,28 @@ extern "C" int main(int argc, char **argv)
+ 		krkrsdl2_convert_set_args(argc, argv);
+ #endif
++#ifdef KRKRVITA_RETAIL
++		krkrvita_boot_trace("engine-arguments-ready");
++#endif
+ 
+ 		if (krkrsdl2_init_platform())
+ 		{
++#ifdef KRKRVITA_RETAIL
++			krkrvita_report_launch_error(
++				"Engine platform initialization stopped before the main loop.");
++#endif
+ 			TVPTerminateCode = 0;
+ 			return TVPTerminateCode;
+ 		}
+ 
++#ifdef KRKRVITA_RETAIL
++		krkrvita_boot_trace("engine-platform-initialized");
++#endif
+ 		krkrsdl2_run_main_loop();
++#ifdef KRKRVITA_RETAIL
++		krkrvita_boot_trace("engine-main-loop-returned");
++#endif
+ 
+ #ifndef __EMSCRIPTEN__
  		krkrsdl2_cleanup();
  #endif
  	}
@@ -480,7 +515,7 @@ index a4453a9..39d5a79 100644
  		TVPTerminateCode = 2;
  		return TVPTerminateCode;
  	}
-@@ -47,4 +77,3 @@ extern "C" int main(int argc, char **argv)
+@@ -47,4 +97,3 @@ extern "C" int main(int argc, char **argv)
  #endif
  	return TVPTerminateCode;
  }
