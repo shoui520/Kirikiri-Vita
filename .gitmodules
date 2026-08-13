@@ -1,0 +1,5 @@
+# Engine dependencies are pinned as Git submodules.
+[submodule "vendor/yuri"]
+	path = vendor/yuri
+	url = https://github.com/YuriSizuku/Kirikiroid2Yuri.git
+	branch = yuri

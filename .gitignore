@@ -1,0 +1,10 @@
+/build*/
+/.cache/
+/.idea/
+/.vscode/
+compile_commands.json
+*.vpk
+*.velf
+*.self
+*.sfo
+
