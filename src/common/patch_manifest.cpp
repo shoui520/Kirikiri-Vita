@@ -219,6 +219,37 @@ std::string percent_encode(std::string_view input) {
     return output;
 }
 
+constexpr std::string_view trusted_release_prefix =
+    "https://github.com/zeas2/Kirikiroid2_patch/releases/download/";
+
+bool is_trusted_release_url(std::string_view reference) {
+    if (reference.substr(0, trusted_release_prefix.size()) != trusted_release_prefix) {
+        return false;
+    }
+    const auto tail = reference.substr(trusted_release_prefix.size());
+    if (tail.empty() || tail.find("..") != std::string_view::npos ||
+        tail.find('\\') != std::string_view::npos || tail.find('?') != std::string_view::npos ||
+        tail.find('#') != std::string_view::npos) {
+        return false;
+    }
+    const auto slash = tail.rfind('/');
+    if (slash == std::string_view::npos || slash + 1 == tail.size()) return false;
+    std::string filename(tail.substr(slash + 1));
+    std::transform(filename.begin(), filename.end(), filename.begin(),
+                   [](unsigned char character) {
+                       return static_cast<char>(std::tolower(character));
+                   });
+    return filename.size() >= 4 && filename.substr(filename.size() - 4) == ".xp3";
+}
+
+std::string_view normalized_repository_path(std::string_view reference) {
+    constexpr std::string_view shared_prefix = "../patch/";
+    if (reference.substr(0, shared_prefix.size()) == shared_prefix) {
+        return reference.substr(shared_prefix.size());
+    }
+    return reference;
+}
+
 } // namespace
 
 PatchManifest PatchManifest::parse(std::string_view javascript) {
@@ -252,7 +283,7 @@ PatchResolution PatchResolver::resolve(const GameDescriptor& game,
         const auto canonical = normalize_game_name(entry.canonical_title);
         const auto display = normalize_game_name(entry.display_title);
         const auto brand = normalize_game_name(entry.brand);
-        PatchCandidate candidate{&entry};
+        PatchCandidate candidate{&entry, 0, {}};
         for (const auto& [signal, label] : signals) {
             candidate.score = std::max(candidate.score,
                 similarity(signal, canonical, label, candidate.reasons));
@@ -287,6 +318,8 @@ PatchResolution PatchResolver::resolve(const GameDescriptor& game,
 }
 
 bool is_safe_patch_path(std::string_view relative) {
+    if (is_trusted_release_url(relative)) return true;
+    relative = normalized_repository_path(relative);
     if (relative.empty() || relative.front() == '/' || relative.find('\\') != std::string_view::npos ||
         relative.find('\0') != std::string_view::npos) {
         return false;
@@ -311,6 +344,7 @@ bool is_safe_patch_path(std::string_view relative) {
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     static constexpr std::string_view allowed[] = {
         ".tjs", ".xp3", ".txt", ".csv", ".ini", ".json", ".dat", ".key",
+        ".cf", ".md",
     };
     return std::find(std::begin(allowed), std::end(allowed), extension) != std::end(allowed);
 }
@@ -319,6 +353,8 @@ std::string patch_file_url(std::string_view relative) {
     if (!is_safe_patch_path(relative)) {
         throw std::invalid_argument("unsafe or unsupported patch path");
     }
+    if (is_trusted_release_url(relative)) return std::string(relative);
+    relative = normalized_repository_path(relative);
     return std::string(kPatchRawBase) + std::string(kPatchCommit) + "/patch/" +
            percent_encode(relative);
 }

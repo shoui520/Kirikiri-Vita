@@ -25,8 +25,6 @@ bool stage_bubble(const BubbleSpec& spec,
         if (spec.title_id.size() != 9 || spec.game_id.empty()) {
             throw std::runtime_error("invalid bubble title or game ID");
         }
-        std::error_code ec;
-        std::filesystem::remove_all(staging_root, ec);
         std::filesystem::create_directories(staging_root / "sce_sys/livearea/contents");
         std::filesystem::copy_file(template_root / "eboot.bin", staging_root / "eboot.bin",
                                    std::filesystem::copy_options::overwrite_existing);
@@ -68,4 +66,3 @@ bool stage_bubble(const BubbleSpec& spec,
 }
 
 } // namespace krkrvita
-

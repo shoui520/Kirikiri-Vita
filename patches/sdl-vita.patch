@@ -1,0 +1,50 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 644715aae..151a47a78 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -461,6 +461,7 @@ set_option(SDL_TEST            "Build the test directory" OFF)
+ if(VITA)
+   set_option(VIDEO_VITA_PIB  "Build with PSVita piglet gles2 support" OFF)
+   set_option(VIDEO_VITA_PVR  "Build with PSVita PVR gles/gles2 support" OFF)
++  set_option(VIDEO_VITA_GXM  "Build with SDL's native PSVita GXM renderer" ON)
+ endif()
+ 
+ # General source files
+@@ -2352,7 +2353,9 @@ elseif(VITA)
+       endif()
+     endif()
+ 
+-    set(SDL_VIDEO_RENDER_VITA_GXM 1)
++    if(VIDEO_VITA_GXM)
++      set(SDL_VIDEO_RENDER_VITA_GXM 1)
++    endif()
+ 
+     list(APPEND EXTRA_LIBS
+       SceGxm_stub
+@@ -3090,4 +3093,3 @@ if(NOT SDL2_DISABLE_UNINSTALL)
+         COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake)
+   endif()
+ endif()
+-
+diff --git a/src/video/vita/SDL_vitavideo.c b/src/video/vita/SDL_vitavideo.c
+index 60bd18f45..5886df4f4 100644
+--- a/src/video/vita/SDL_vitavideo.c
++++ b/src/video/vita/SDL_vitavideo.c
+@@ -69,10 +69,11 @@ VITA_Destroy(SDL_VideoDevice * device)
+ }
+ 
+ static SDL_VideoDevice *
+-VITA_Create()
++VITA_Create(int devindex)
+ {
+     SDL_VideoDevice *device;
+     SDL_VideoData *phdata;
++    (void)devindex;
+ #if SDL_VIDEO_VITA_PIB
+     SDL_GLDriverData *gldata;
+ #endif
+@@ -629,4 +630,3 @@ void VITA_PumpEvents(_THIS)
+ #endif /* SDL_VIDEO_DRIVER_VITA */
+ 
+ /* vi: set ts=4 sw=4 expandtab: */
+-

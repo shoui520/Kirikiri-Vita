@@ -13,10 +13,9 @@ int main() {
     game_id[std::strcspn(game_id, "\r\n")] = 0;
     if (game_id[0]) {
         char parameter[128]{};
-        std::snprintf(parameter, sizeof(parameter), "game=%s", game_id);
+        std::snprintf(parameter, sizeof(parameter), "-krkrgame=%s", game_id);
         sceAppMgrLaunchAppByName2("KRVITA001", parameter, nullptr);
     }
     sceKernelExitProcess(0);
     return 0;
 }
-

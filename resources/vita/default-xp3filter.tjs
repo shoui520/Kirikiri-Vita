@@ -1,0 +1,5 @@
+// Common retail XP3 hash-XOR extraction filter.
+// Used only when no resolved or game-local xp3filter.tjs is available.
+Storages.setXP3ArchiveExtractionFilter(function(hash, offset, buffer, length) {
+    buffer.xor(0, length, hash);
+});

@@ -1,6 +1,7 @@
 #include "krkrvita/filter_heuristic.hpp"
 #include "krkrvita/game.hpp"
 #include "krkrvita/patch_manifest.hpp"
+#include "krkrvita/patch_repository.hpp"
 #include "krkrvita/sfo.hpp"
 #include "krkrvita/sha256.hpp"
 #include "krkrvita/storage.hpp"
@@ -12,8 +13,10 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -58,7 +61,52 @@ void test_manifest_and_resolver() {
           "wrong patch selected");
     check(is_safe_patch_path("Brand/Game/xp3filter.tjs"), "safe patch rejected");
     check(!is_safe_patch_path("../xp3filter.tjs"), "traversal patch accepted");
+    check(is_safe_patch_path("../patch/old_core_patch/Override2.tjs"),
+          "shared compatibility patch rejected");
+    check(is_safe_patch_path(
+              "https://github.com/zeas2/Kirikiroid2_patch/releases/download/tag/patch2.xp3"),
+          "trusted release XP3 rejected");
+    check(!is_safe_patch_path("https://example.com/patch2.xp3"),
+          "untrusted patch URL accepted");
     check(!is_safe_patch_path("Brand/tool.exe"), "executable patch accepted");
+}
+
+class MemoryHttpClient final : public HttpClient {
+public:
+    std::unordered_map<std::string, std::vector<std::uint8_t>> responses;
+    int requests = 0;
+
+    HttpResult get(std::string_view url) override {
+        ++requests;
+        const auto found = responses.find(std::string(url));
+        if (found == responses.end()) return {404, {}, "not found"};
+        return {200, found->second, {}};
+    }
+};
+
+void test_patch_cache_integrity() {
+    const auto root = std::filesystem::temp_directory_path() / "krkrvita-patch-cache-test";
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+    PatchEntry entry;
+    entry.files = {"Brand/Game/xp3filter.tjs"};
+    const std::string script =
+        "Storages.setXP3ArchiveExtractionFilter(function(h,o,b,l){b.xor(0,l,h);});";
+    MemoryHttpClient http;
+    http.responses[patch_file_url(entry.files.front())] =
+        std::vector<std::uint8_t>(script.begin(), script.end());
+    PatchRepository repository(root);
+    auto fetched = repository.fetch_bundle(http, entry);
+    check(fetched.size() == 1 && http.requests == 1, "patch was not fetched");
+    std::ofstream(fetched.front().cache_path, std::ios::binary | std::ios::trunc)
+        << "corrupt";
+    fetched = repository.fetch_bundle(http, entry);
+    check(http.requests == 2, "corrupt cached patch was trusted");
+    std::ifstream repaired(fetched.front().cache_path, std::ios::binary);
+    const std::string contents((std::istreambuf_iterator<char>(repaired)),
+                               std::istreambuf_iterator<char>());
+    check(contents == script, "corrupt patch cache was not repaired");
+    std::filesystem::remove_all(root, ec);
 }
 
 void test_filter_detection() {
@@ -150,6 +198,7 @@ int main() {
         test_sha256();
         test_normalize();
         test_manifest_and_resolver();
+        test_patch_cache_integrity();
         test_filter_detection();
         test_yuri_filter_vm();
         test_sfo();

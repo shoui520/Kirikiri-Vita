@@ -4,7 +4,11 @@
 
 #include <curl/curl.h>
 
+#include <algorithm>
+#include <array>
+#include <cctype>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 
@@ -41,6 +45,71 @@ std::string digest(const std::vector<std::uint8_t>& bytes) {
     return Sha256::hex(hash.finish());
 }
 
+std::optional<std::string> digest_file(const std::filesystem::path& path) {
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream) return std::nullopt;
+    Sha256 hash;
+    std::array<char, 64 * 1024> buffer{};
+    while (stream) {
+        stream.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        const auto count = stream.gcount();
+        if (count > 0) hash.update(buffer.data(), static_cast<std::size_t>(count));
+    }
+    if (!stream.eof()) return std::nullopt;
+    return Sha256::hex(hash.finish());
+}
+
+std::optional<std::string> recorded_digest(const std::filesystem::path& sidecar) {
+    std::ifstream stream(sidecar);
+    std::string value;
+    stream >> value;
+    if (!stream || value.size() != 64 ||
+        !std::all_of(value.begin(), value.end(), [](unsigned char character) {
+            return std::isxdigit(character) != 0;
+        })) {
+        return std::nullopt;
+    }
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char character) {
+                       return static_cast<char>(std::tolower(character));
+                   });
+    return value;
+}
+
+bool verified_cache_file(const std::filesystem::path& path,
+                         const std::filesystem::path& sidecar,
+                         std::string* sum = nullptr) {
+    if (!std::filesystem::is_regular_file(path) ||
+        !std::filesystem::is_regular_file(sidecar)) return false;
+    const auto recorded = recorded_digest(sidecar);
+    const auto actual = digest_file(path);
+    if (!recorded || !actual || *recorded != *actual) return false;
+    if (sum) *sum = *actual;
+    return true;
+}
+
+bool is_remote_reference(std::string_view reference) {
+    return reference.substr(0, 8) == "https://";
+}
+
+std::filesystem::path cache_destination(const std::filesystem::path& cache_root,
+                                        std::string_view reference) {
+    const auto revision_root = cache_root / std::string(kPatchCommit);
+    if (is_remote_reference(reference)) {
+        Sha256 hash;
+        hash.update(reference);
+        const auto key = Sha256::hex(hash.finish()).substr(0, 24);
+        const auto slash = reference.rfind('/');
+        const std::string filename(reference.substr(slash + 1));
+        return revision_root / "external" / key / filename;
+    }
+    constexpr std::string_view shared_prefix = "../patch/";
+    if (reference.substr(0, shared_prefix.size()) == shared_prefix) {
+        reference.remove_prefix(shared_prefix.size());
+    }
+    return revision_root / "patch" / std::filesystem::path(reference);
+}
+
 } // namespace
 
 CurlHttpClient::CurlHttpClient() {
@@ -69,8 +138,13 @@ HttpResult CurlHttpClient::get(std::string_view url) {
     curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, append_body);
     curl_easy_setopt(handle, CURLOPT_WRITEDATA, &result.body);
     curl_easy_setopt(handle, CURLOPT_ERRORBUFFER, error);
+#if LIBCURL_VERSION_NUM >= 0x075500
+    curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "https");
+    curl_easy_setopt(handle, CURLOPT_REDIR_PROTOCOLS_STR, "https");
+#else
     curl_easy_setopt(handle, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
     curl_easy_setopt(handle, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTPS);
+#endif
     const auto code = curl_easy_perform(handle);
     if (code != CURLE_OK) {
         result.error = error[0] ? error : curl_easy_strerror(code);
@@ -111,6 +185,10 @@ bool PatchRepository::update_manifest(HttpClient& http, std::string* error) cons
 }
 
 PatchManifest PatchRepository::load_manifest() const {
+    const auto sidecar = manifest_path().string() + ".sha256";
+    if (!verified_cache_file(manifest_path(), sidecar)) {
+        throw std::runtime_error("cached patch manifest failed SHA-256 verification");
+    }
     return PatchManifest::load(manifest_path());
 }
 
@@ -119,17 +197,10 @@ PatchRepository::cached_bundle(const PatchEntry& entry) const {
     std::vector<CachedPatchFile> files;
     for (const auto& relative : entry.files) {
         if (!is_safe_patch_path(relative)) continue;
-        const auto destination = cache_root_ / std::string(kPatchCommit) / "patch" /
-                                 std::filesystem::path(relative);
+        const auto destination = cache_destination(cache_root_, relative);
         const auto sidecar = destination.string() + ".sha256";
-        if (!std::filesystem::is_regular_file(destination) ||
-            !std::filesystem::is_regular_file(sidecar)) {
-            return {};
-        }
-        std::ifstream digest_stream(sidecar);
         std::string sum;
-        digest_stream >> sum;
-        if (sum.size() != 64) return {};
+        if (!verified_cache_file(destination, sidecar, &sum)) return {};
         files.push_back({relative, destination, sum});
     }
     return files;
@@ -140,14 +211,10 @@ CachedPatchFile PatchRepository::fetch_one(HttpClient& http,
     if (!is_safe_patch_path(relative)) {
         throw std::runtime_error("patch bundle contains unsafe path: " + std::string(relative));
     }
-    const auto destination = cache_root_ / std::string(kPatchCommit) / "patch" /
-                             std::filesystem::path(relative);
+    const auto destination = cache_destination(cache_root_, relative);
     const auto sidecar = destination.string() + ".sha256";
-    if (std::filesystem::is_regular_file(destination) &&
-        std::filesystem::is_regular_file(sidecar)) {
-        std::ifstream digest_stream(sidecar);
-        std::string sum;
-        digest_stream >> sum;
+    std::string sum;
+    if (verified_cache_file(destination, sidecar, &sum)) {
         return {std::string(relative), destination, sum};
     }
     auto response = http.get(patch_file_url(relative));
@@ -156,12 +223,12 @@ CachedPatchFile PatchRepository::fetch_one(HttpClient& http,
                                  " (HTTP " + std::to_string(response.status) + "): " +
                                  response.error);
     }
-    const auto sum = digest(response.body);
+    const auto downloaded_sum = digest(response.body);
     write_atomic(destination, response.body);
-    std::vector<std::uint8_t> sum_bytes(sum.begin(), sum.end());
+    std::vector<std::uint8_t> sum_bytes(downloaded_sum.begin(), downloaded_sum.end());
     sum_bytes.push_back('\n');
     write_atomic(sidecar, sum_bytes);
-    return {std::string(relative), destination, sum};
+    return {std::string(relative), destination, downloaded_sum};
 }
 
 std::vector<CachedPatchFile>

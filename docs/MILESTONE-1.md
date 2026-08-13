@@ -15,3 +15,46 @@ the Vita and all of the following work:
 - generate and install a direct LiveArea bubble using the EXE icon and title.
 
 Passing a launcher smoke test is not considered game compatibility.
+
+## Current verification boundary
+
+Completed off-device for the milestone game:
+
+- exact automatic match to `ORCSOFT／DWARFSOFT/色情教団` at the pinned patch
+  commit;
+- byte-identical staging of `patch.tjs` and `xp3filter.tjs`;
+- execution of the Yuri TJS filter VM against `data.xp3`, with all 32 sampled
+  blocks recognized after decryption;
+- a complete Vita cross-build of the current Kirikiri SDL2/krkrz runtime with
+  the Yuri extraction-filter ABI, VitaGL presentation, SDL Vita audio,
+  controller/touch profiles and ScePvf font rasterization;
+- generation of `active.ini` and `profiles/44bb539bf9510882.ini`; and
+- generation of a 58 KiB direct bubble VPK with title ID `K44BB539B` and a
+  128x128 indexed PNG decoded from the game's Windows executable.
+
+Still requiring a real Vita run before this milestone can be called complete:
+
+- boot through the real title screen and scenario;
+- verify PVF Japanese glyph metrics and line layout on firmware;
+- verify BGM, effects, voices, saves and load paths;
+- tune controller/touch behavior if the title assumes Windows-specific input;
+  and
+- install and launch the generated direct bubble into the central app.
+
+## Reproducible hardware-test payload
+
+```sh
+VITASDK=/home/shoui/vitasdk JOBS=4 ./scripts/build-vita.sh
+./build-host/krkrvita-tool vita-stage \
+  '/home/shoui/Agents/CodexMax/色情教団' \
+  .cache/patches .cache/vita-stage \
+  'ux0:data/krkrvita/games/色情教団'
+./scripts/package-bubble.sh \
+  '/home/shoui/Agents/CodexMax/色情教団' \
+  .cache/色情教団-direct.vpk
+```
+
+Install `build-vita-engine/krkrsdl2.vpk`, copy the untouched game directory to
+`ux0:data/krkrvita/games/色情教団`, and copy the contents of
+`.cache/vita-stage` into `ux0:data/krkrvita`. Install the direct bubble only
+after the central application and profile are present.

@@ -1,0 +1,444 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 9503505..d41c7f2 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -637,6 +637,61 @@ if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.13.0")
+ target_link_options(${KRKRSDL2_NAME} PUBLIC ${KRKRSDL2_LDFLAGS})
+ endif()
+ target_link_libraries(${KRKRSDL2_NAME} ${KRKRSDL2_LIBS})
++
++# A complete Kirikiri core is kept here wholesale.  Platform projects may
++# replace only the final presentation boundary instead of reimplementing TJS
++# native classes one at a time.
++if(VITA AND DEFINED KRKRVITA_OVERLAY_DIR)
++# Yuri's retail filter bridge is compiled as a unit.  Its shared decoder path
++# depends on an Android-only thread-exit hook; select Yuri's own thread-local
++# implementation for Vita without maintaining a forked copy of the file.
++file(READ "${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/plugins/xp3filter.cpp"
++	KRKRVITA_XP3FILTER_SOURCE)
++string(REPLACE "#if 1 ||" "#if 0 ||" KRKRVITA_XP3FILTER_SOURCE
++	"${KRKRVITA_XP3FILTER_SOURCE}")
++string(REPLACE
++	"thread_local std::auto_ptr<XP3FilterDecoder> ret;\n\tif(!ret) ret = AddXP3Decoder();"
++	"thread_local std::unique_ptr<XP3FilterDecoder> ret;\n\tif(!ret) ret.reset(AddXP3Decoder());"
++	KRKRVITA_XP3FILTER_SOURCE "${KRKRVITA_XP3FILTER_SOURCE}")
++file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/krkrvita-generated")
++file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/krkrvita-generated/xp3filter.cpp"
++	"${KRKRVITA_XP3FILTER_SOURCE}")
++target_sources(${KRKRSDL2_NAME} PRIVATE
++	${KRKRVITA_OVERLAY_DIR}/src/engine/vita/vitagl_presenter.cpp
++	${KRKRVITA_OVERLAY_DIR}/src/engine/vita/VitaPvfFontRasterizer.cpp
++	${KRKRVITA_OVERLAY_DIR}/src/engine/vita/vita_input_bridge.cpp
++	${KRKRVITA_OVERLAY_DIR}/src/engine/vita/vita_launch.cpp
++	${KRKRVITA_OVERLAY_DIR}/src/engine/retail/retail_bootstrap.cpp
++	${KRKRVITA_OVERLAY_DIR}/src/engine/retail/legacy_classes.cpp
++	${KRKRVITA_OVERLAY_DIR}/src/engine/retail/xp3filter_install.cpp
++	${KRKRVITA_OVERLAY_DIR}/src/engine/retail/yuri_kag_parser.cpp
++	${KRKRVITA_OVERLAY_DIR}/src/engine/retail/yuri_menu_intf.cpp
++	${KRKRVITA_OVERLAY_DIR}/src/engine/retail/yuri_menu_impl.cpp
++	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/plugins/ncbind/ncbind.cpp
++	${CMAKE_CURRENT_BINARY_DIR}/krkrvita-generated/xp3filter.cpp
++)
++target_include_directories(${KRKRSDL2_NAME} PRIVATE
++	${KRKRVITA_OVERLAY_DIR}/include
++	${KRKRVITA_OVERLAY_DIR}/src/engine/vita
++	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/plugins
++	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/plugins/ncbind
++	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/core/environ
++	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/core/utils
++	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/core/visual
++	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/core/visual/win32
++)
++target_compile_definitions(${KRKRSDL2_NAME} PRIVATE
++	KRKRVITA_VITAGL=1
++	KRKRVITA_RETAIL=1
++	KRKRVITA_PVF_FONT=1
++)
++target_link_libraries(${KRKRSDL2_NAME}
++	vitaGL vitashark SceShaccCgExt SceShaccCg_stub taihen_stub mathneon
++	SceKernelDmacMgr_stub
++	ScePvf_stub
++	SceNotificationUtil_stub
++)
++endif()
+ if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.16.0")
+ if(KRKRSDL2_ENABLE_PRECOMPILED_HEADERS)
+ target_precompile_headers(${KRKRSDL2_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/core/sdl2/SDLPrecompiledHeader.h)
+@@ -719,6 +774,7 @@ vita_create_vpk(${KRKRSDL2_NAME}.vpk ${VITA_TITLEID} ${KRKRSDL2_NAME}.self
+     FILE ${VITA_RESOURCES_ROOT}/sce_sys/livearea/contents/icon.png sce_sys/livearea/contents/icon.png
+     FILE ${VITA_RESOURCES_ROOT}/sce_sys/livearea/contents/template.xml sce_sys/livearea/contents/template.xml
+     FILE ${EMBED_DATA_PATH} ${EMBED_DATA_PATH_BASENAME}
++	FILE ${KRKRVITA_OVERLAY_DIR}/resources/vita/default-xp3filter.tjs data/xp3filter.tjs
+ )
+ endif()
+ 
+diff --git a/src/core/base/sdl2/SysInitImpl.cpp b/src/core/base/sdl2/SysInitImpl.cpp
+index bea8d95..d127cdf 100644
+--- a/src/core/base/sdl2/SysInitImpl.cpp
++++ b/src/core/base/sdl2/SysInitImpl.cpp
+@@ -1359,7 +1359,7 @@ void TVPBeforeSystemInit()
+ 		}
+ 	}
+ 
+-#if !defined(__vita__)
++#if !defined(__vita__) || defined(KRKRVITA_RETAIL)
+ 	if (!TVPProjectDirSelected)
+ 	{
+ 		tjs_string dir_utf16;
+@@ -1460,6 +1460,13 @@ void TVPAfterSystemInit()
+ 	// check CPU type
+ 	TVPDetectCPU();
+ 
++#ifdef KRKRVITA_RETAIL
++	extern void krkrvita_install_xp3filter();
++	extern void krkrvita_input_initialize();
++	krkrvita_input_initialize();
++	krkrvita_install_xp3filter();
++#endif
++
+ #if 0
+ 	// dump display device
+ 	TVPDumpDisplayDevices();
+@@ -2212,6 +2219,3 @@ bool TVPExecuteUserConfig()
+ //---------------------------------------------------------------------------
+ 
+ 
+-
+-
+-
+diff --git a/src/core/sdl2/SDLApplication.cpp b/src/core/sdl2/SDLApplication.cpp
+index 48c7820..a0c6563 100644
+--- a/src/core/sdl2/SDLApplication.cpp
++++ b/src/core/sdl2/SDLApplication.cpp
+@@ -17,6 +17,10 @@
+ #include "tjsArray.h"
+ #include "StorageIntf.h"
+ #include "SDLBitmapCompletion.h"
++#ifdef KRKRVITA_VITAGL
++#include "krkrvita/vitagl_presenter.hpp"
++#include "krkrvita/vita_input_bridge.hpp"
++#endif
+ #include "ScriptMgnIntf.h"
+ #include "SystemControl.h"
+ #include "PluginImpl.h"
+@@ -527,12 +531,16 @@ protected:
+ #ifdef KRKRSDL2_ENABLE_ZOOM
+ 	tTVPRect FullScreenDestRect;
+ 	tTVPRect LastSentDrawDeviceDestRect;
++#endif
+ 
++#if defined(KRKRSDL2_ENABLE_ZOOM) || defined(KRKRVITA_VITAGL)
+ 	//-- layer position / size
+ 	tjs_int LayerLeft = 0;
+ 	tjs_int LayerTop = 0;
+ 	tjs_int LayerWidth = 32;
+ 	tjs_int LayerHeight = 32;
++#endif
++#ifdef KRKRSDL2_ENABLE_ZOOM
+ 	tjs_int ZoomDenom = 1; // Zooming factor denominator (setting)
+ 	tjs_int ZoomNumer = 1; // Zooming factor numerator (setting)
+ 	tjs_int ActualZoomDenom = 1; // Zooming factor denominator (actual)
+@@ -816,6 +824,23 @@ TVPWindowWindow::TVPWindowWindow(tTJSNI_Window *w)
+ 	this->openGlScreen = nullptr;
+ #endif
+ 	this->surface = nullptr;
++#ifdef KRKRVITA_VITAGL
++	if (!krkrvita_vitagl_initialize())
++	{
++		TVPThrowExceptionMessage(TJS_W("Cannot initialize VitaGL"));
++	}
++	this->renderer = nullptr;
++	this->texture = nullptr;
++	this->bitmapCompletion = new TVPSDLBitmapCompletion();
++	this->surface = SDL_CreateRGBSurface(0, new_window_w, new_window_h, 32,
++		0x00ff0000, 0x0000ff00, 0x000000ff, 0);
++	if (!this->surface)
++	{
++		TVPThrowExceptionMessage(TJS_W("Cannot create VitaGL staging surface: %1"), ttstr(SDL_GetError()));
++	}
++	this->bitmapCompletion->surface = this->surface;
++	krkrvita_vitagl_resize(new_window_w, new_window_h);
++#else
+ #ifdef KRKRZ_ENABLE_CANVAS
+ 	if (TVPIsEnableDrawDevice())
+ #endif
+@@ -854,6 +879,7 @@ TVPWindowWindow::TVPWindowWindow(tTJSNI_Window *w)
+ 			SDL_SetRenderDrawColor(this->renderer, 0x00, 0x00, 0x00, 0xFF);
+ 		}
+ 	}
++#endif
+ #ifdef _WIN32
+ 	::SetWindowLongPtr(this->GetHandle(), GWLP_USERDATA, (LONG_PTR)this);
+ #endif
+@@ -897,6 +923,13 @@ TVPWindowWindow::~TVPWindowWindow()
+ 		SDL_FreeSurface(this->surface);
+ 		this->surface = nullptr;
+ 	}
++#ifdef KRKRVITA_VITAGL
++	if (this->surface)
++	{
++		SDL_FreeSurface(this->surface);
++		this->surface = nullptr;
++	}
++#endif
+ 	if (this->renderer)
+ 	{
+ 		SDL_DestroyRenderer(this->renderer);
+@@ -927,10 +960,24 @@ TVPWindowWindow::~TVPWindowWindow()
+ 
+ void TVPWindowWindow::SetPaintBoxSize(tjs_int w, tjs_int h)
+ {
+-#ifdef KRKRSDL2_ENABLE_ZOOM
++#if defined(KRKRSDL2_ENABLE_ZOOM) || defined(KRKRVITA_VITAGL)
+ 	this->LayerWidth = w;
+ 	this->LayerHeight = h;
+ #endif
++#ifdef KRKRVITA_VITAGL
++	if (this->surface)
++	{
++		SDL_FreeSurface(this->surface);
++		this->surface = nullptr;
++	}
++	this->surface = SDL_CreateRGBSurface(0, w, h, 32,
++		0x00ff0000, 0x0000ff00, 0x000000ff, 0);
++	if (!this->surface || !krkrvita_vitagl_resize(w, h))
++	{
++		TVPThrowExceptionMessage(TJS_W("Cannot resize VitaGL presentation surface"));
++	}
++	this->bitmapCompletion->surface = this->surface;
++#else
+ 	if (this->renderer)
+ 	{
+ 		if (this->texture)
+@@ -956,6 +1003,7 @@ void TVPWindowWindow::SetPaintBoxSize(tjs_int w, tjs_int h)
+ 		}
+ 		this->bitmapCompletion->surface = this->surface;
+ 	}
++#endif
+ #ifndef KRKRSDL2_ENABLE_ZOOM
+ 	SDL_Rect cliprect;
+ 	cliprect.x = 0;
+@@ -993,6 +1041,23 @@ static int MulDiv(int nNumber, int nNumerator, int nDenominator)
+ 
+ void TVPWindowWindow::TranslateWindowToDrawArea(int &x, int &y)
+ {
++#ifdef KRKRVITA_VITAGL
++	int window_width = 0, window_height = 0;
++	SDL_GetWindowSize(this->window, &window_width, &window_height);
++	if(window_width > 0 && window_height > 0 && this->LayerWidth > 0 && this->LayerHeight > 0)
++	{
++		const float screen_x = x * (960.0f / window_width);
++		const float screen_y = y * (544.0f / window_height);
++		const float scale = std::min(960.0f / this->LayerWidth, 544.0f / this->LayerHeight);
++		const float left = (960.0f - this->LayerWidth * scale) * 0.5f;
++		const float top = (544.0f - this->LayerHeight * scale) * 0.5f;
++		x = std::max(0, std::min(this->LayerWidth - 1,
++			static_cast<int>((screen_x - left) / scale)));
++		y = std::max(0, std::min(this->LayerHeight - 1,
++			static_cast<int>((screen_y - top) / scale)));
++	}
++	return;
++#endif
+ #ifdef KRKRSDL2_ENABLE_ZOOM
+ #ifdef KRKRZ_ENABLE_CANVAS
+ 	if (this->context)
+@@ -1009,6 +1074,19 @@ void TVPWindowWindow::TranslateWindowToDrawArea(int &x, int &y)
+ 
+ void TVPWindowWindow::TranslateDrawAreaToWindow(int &x, int &y)
+ {
++#ifdef KRKRVITA_VITAGL
++	int window_width = 0, window_height = 0;
++	SDL_GetWindowSize(this->window, &window_width, &window_height);
++	if(window_width > 0 && window_height > 0 && this->LayerWidth > 0 && this->LayerHeight > 0)
++	{
++		const float scale = std::min(960.0f / this->LayerWidth, 544.0f / this->LayerHeight);
++		const float left = (960.0f - this->LayerWidth * scale) * 0.5f;
++		const float top = (544.0f - this->LayerHeight * scale) * 0.5f;
++		x = static_cast<int>((left + x * scale) * window_width / 960.0f);
++		y = static_cast<int>((top + y * scale) * window_height / 544.0f);
++	}
++	return;
++#endif
+ #ifdef KRKRSDL2_ENABLE_ZOOM
+ #ifdef KRKRZ_ENABLE_CANVAS
+ 	if (this->context)
+@@ -1676,6 +1754,10 @@ void TVPWindowWindow::Show()
+ }
+ void TVPWindowWindow::TickBeat()
+ {
++#ifdef KRKRVITA_VITAGL
++	krkrvita_input_pump(this->window,
++		(sdl_controller_num > 0 && sdl_controllers) ? sdl_controllers[0] : nullptr);
++#endif
+ 	if (!this->visibilityHasInitialized)
+ 	{
+ 		this->visibilityHasInitialized = true;
+@@ -1690,6 +1772,14 @@ void TVPWindowWindow::TickBeat()
+ 			rect.y = this->bitmapCompletion->update_rect.top;
+ 			rect.w = this->bitmapCompletion->update_rect.get_width();
+ 			rect.h = this->bitmapCompletion->update_rect.get_height();
++#ifdef KRKRVITA_VITAGL
++			if (this->surface)
++			{
++				krkrvita_vitagl_present(this->surface->pixels, this->surface->pitch,
++					this->surface->w, this->surface->h);
++				this->hasDrawn = true;
++			}
++#else
+ 			if (this->renderer)
+ 			{
+ #if defined(KRKRSDL2_ENABLE_ZOOM) || defined(KRKRSDL2_RENDERER_FULL_UPDATES)
+@@ -1758,6 +1848,7 @@ void TVPWindowWindow::TickBeat()
+ 				SDL_UpdateWindowSurfaceRects(this->window, &rect, 1);
+ 				this->hasDrawn = true;
+ 			}
++#endif
+ 			this->needsGraphicUpdate = false;
+ 		}
+ 	}
+@@ -2637,6 +2728,9 @@ bool TVPWindowWindow::window_receive_event_input(SDL_Event event)
+ 	}
+ 	if (this->window && this->hasDrawn)
+ 	{
++#ifdef KRKRVITA_VITAGL
++		if(!krkrvita_input_translate(event)) return true;
++#endif
+ 		tjs_uint32 s = TVP_TShiftState_To_uint32(GetShiftState());
+ 		s |= GetMouseButtonState();
+ 		if (this->TJSNativeInstance->CanDeliverEvents())
+@@ -3159,13 +3253,32 @@ TShiftState TVP_TShiftState_From_uint32(tjs_uint32 state)
+ 	return result;
+ }
+ 
+-void TVPGetAllFontList(std::vector<tjs_string>& list) {}
++void TVPGetAllFontList(std::vector<tjs_string>& list) {
++#ifdef KRKRVITA_PVF_FONT
++	static const tjs_char *names[] = {
++		TJS_W("ScePvf Japanese"), TJS_W("Noto Sans CJK JP"),
++		TJS_W("MS Gothic"), TJS_W("MS PGothic"),
++		TJS_W("ＭＳ ゴシック"), TJS_W("ＭＳ Ｐゴシック"),
++		TJS_W("MS Mincho"), TJS_W("MS PMincho"),
++		TJS_W("ＭＳ 明朝"), TJS_W("ＭＳ Ｐ明朝"),
++		TJS_W("Meiryo"), TJS_W("メイリオ"),
++		TJS_W("Yu Gothic"), TJS_W("游ゴシック")
++	};
++	for(const auto *name : names) list.emplace_back(name);
++#endif
++}
+ 
+ const tjs_char *TVPGetDefaultFontName()
+ {
+ 	if (!TVPGetCommandLine(TJS_W("-deffont"), nullptr))
+ 	{
+-		TVPSetCommandLine(TJS_W("-deffont"), TJS_W("Noto Sans CJK JP"));
++		TVPSetCommandLine(TJS_W("-deffont"),
++#ifdef KRKRVITA_PVF_FONT
++			TJS_W("ScePvf Japanese")
++#else
++			TJS_W("Noto Sans CJK JP")
++#endif
++		);
+ 	}
+ 	static tjs_int ArgumentGeneration = 0;
+ 	if (ArgumentGeneration != TVPGetCommandLineArgumentGeneration())
+@@ -3209,7 +3322,7 @@ const ttstr &TVPGetDefaultFaceNames()
+ 
+ // Override allocation functions by removing the std::bad_alloc throw and doing garbage collection.
+ #ifdef KRKRSDL2_OVERRIDE_NEW_ALLOCATOR_FUNCTIONS
+-void *operator new(std::size_t size) noexcept
++void *operator new(std::size_t size)
+ {
+ 	bool has_gced = false;
+ 
+@@ -3237,7 +3350,7 @@ void *operator new(size_t size, const std::nothrow_t&) noexcept
+ 	return p;
+ }
+ 
+-void *operator new[](size_t size) noexcept
++void *operator new[](size_t size)
+ {
+ 	return ::operator new(size);
+ }
+@@ -3280,7 +3393,7 @@ void operator delete[] (void *ptr, size_t) noexcept
+ }
+ 
+ #ifdef __cpp_aligned_new
+-void *operator new(std::size_t size, std::align_val_t alignment) noexcept
++void *operator new(std::size_t size, std::align_val_t alignment)
+ {
+ 	bool has_gced = false;
+ 
+@@ -3313,7 +3426,7 @@ void *operator new(size_t size, std::align_val_t alignment, const std::nothrow_t
+ 	return p;
+ }
+ 
+-void *operator new[](size_t size, std::align_val_t alignment) noexcept
++void *operator new[](size_t size, std::align_val_t alignment)
+ {
+ 	return ::operator new(size, alignment);
+ }
+diff --git a/src/core/sdl2/SDLEntrypoint.cpp b/src/core/sdl2/SDLEntrypoint.cpp
+index a4453a9..39d5a79 100644
+--- a/src/core/sdl2/SDLEntrypoint.cpp
++++ b/src/core/sdl2/SDLEntrypoint.cpp
+@@ -3,9 +3,15 @@
+ 
+ #include "SDLApplication.h"
+ #include "SysInitImpl.h"
++#include "tjsError.h"
++#ifdef KRKRVITA_RETAIL
++#include "krkrvita/retail_bootstrap.hpp"
++#endif
+ #ifdef USE_SDL_MAIN
+ #include <SDL_main.h>
+ #endif
++#include <exception>
++#include <string>
+ 
+ #if defined(USE_SDL_MAIN)
+ extern "C" int SDL_main(int argc, char **argv)
+@@ -19,6 +25,10 @@ extern "C" int main(int argc, char **argv)
+ 	{
+ 		krkrsdl2_pre_init_platform();
+ 
++#ifdef KRKRVITA_RETAIL
++		krkrvita_resolve_launch(argc, argv);
++#endif
++
+ #if defined(_WIN32) && defined(_UNICODE)
+ 		krkrsdl2_set_args(argc, argv);
+ #else
+@@ -37,8 +47,28 @@ extern "C" int main(int argc, char **argv)
+ 		krkrsdl2_cleanup();
+ #endif
+ 	}
++	catch (const TJS::eTJS &error)
++	{
++#ifdef KRKRVITA_RETAIL
++		const std::string message = error.GetMessage().AsNarrowStdString();
++		krkrvita_report_launch_error(message.c_str());
++#endif
++		TVPTerminateCode = 2;
++		return TVPTerminateCode;
++	}
++	catch (const std::exception &error)
++	{
++#ifdef KRKRVITA_RETAIL
++		krkrvita_report_launch_error(error.what());
++#endif
++		TVPTerminateCode = 2;
++		return TVPTerminateCode;
++	}
+ 	catch (...)
+ 	{
++#ifdef KRKRVITA_RETAIL
++		krkrvita_report_launch_error("Unknown fatal engine exception during startup.");
++#endif
+ 		TVPTerminateCode = 2;
+ 		return TVPTerminateCode;
+ 	}
+@@ -47,4 +77,3 @@ extern "C" int main(int argc, char **argv)
+ #endif
+ 	return TVPTerminateCode;
+ }
+-

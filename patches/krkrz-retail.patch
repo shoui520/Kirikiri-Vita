@@ -1,0 +1,219 @@
+diff --git a/base/ScriptMgnIntf.cpp b/base/ScriptMgnIntf.cpp
+index 76ffe10f..4f113dc4 100644
+--- a/base/ScriptMgnIntf.cpp
++++ b/base/ScriptMgnIntf.cpp
+@@ -247,10 +247,14 @@ void TVPInitScriptEngine()
+ 	dsp = new tTJSNC_BasicDrawDevice();
+ 	val = tTJSVariant(dsp);
+ 	dsp->Release();
+-	windowclass->PropSet(TJS_MEMBERENSURE|TJS_IGNOREPROP|TJS_STATICMEMBER,
+-		TJS_W("BasicDrawDevice"), NULL, &val, windowclass);
+-#endif
+-	// Add Extension Classes
++	windowclass->PropSet(TJS_MEMBERENSURE|TJS_IGNOREPROP|TJS_STATICMEMBER,
++		TJS_W("BasicDrawDevice"), NULL, &val, windowclass);
++#endif
++#ifdef KRKRVITA_RETAIL
++	extern void krkrvita_register_legacy_classes(iTJSDispatch2 *global);
++	krkrvita_register_legacy_classes(global);
++#endif
++	// Add Extension Classes
+ 	TVPCauseAtInstallExtensionClass( global );
+ 
+ 	// Garbage Collection Hook
+@@ -580,14 +584,18 @@ void TVPDumpScriptEngine()
+ //---------------------------------------------------------------------------
+ // TVPExecuteStartupScript
+ //---------------------------------------------------------------------------
+-void TVPExecuteStartupScript()
+-{
+-	// execute "startup.tjs"
+-	try
+-	{
+-		try
+-		{
+-			TVPAddLog( TVPInfoLoadingStartupScript + TVPStartupScriptName );
++void TVPExecuteStartupScript()
++{
++	// execute "startup.tjs"
++	try
++	{
++		try
++		{
++#ifdef KRKRVITA_RETAIL
++			extern void krkrvita_execute_patch_script();
++			krkrvita_execute_patch_script();
++#endif
++			TVPAddLog( TVPInfoLoadingStartupScript + TVPStartupScriptName );
+ 			TVPExecuteStorage(TVPStartupScriptName);
+ 			TVPAddLog( (const tjs_char*)TVPInfoStartupScriptEnded );
+ 		}
+diff --git a/base/XP3Archive.cpp b/base/XP3Archive.cpp
+index 19b09ec2..376c1d65 100644
+--- a/base/XP3Archive.cpp
++++ b/base/XP3Archive.cpp
+@@ -34,11 +34,17 @@ bool TVPAllowExtractProtectedStorage = true;
+ // archive filter related
+ //---------------------------------------------------------------------------
+ tTVPXP3ArchiveExtractionFilter TVPXP3ArchiveExtractionFilter  = NULL;
+-void TVPSetXP3ArchiveExtractionFilter(tTVPXP3ArchiveExtractionFilter filter)
+-{
+-	TVPXP3ArchiveExtractionFilter = filter;
+-}
+-//---------------------------------------------------------------------------
++void TVPSetXP3ArchiveExtractionFilter(tTVPXP3ArchiveExtractionFilter filter)
++{
++	TVPXP3ArchiveExtractionFilter = filter;
++}
++//---------------------------------------------------------------------------
++static tTVPXP3ArchiveContentFilter TVPXP3ArchiveContentFilter = NULL;
++void TVPSetXP3ArchiveContentFilter(tTVPXP3ArchiveContentFilter filter)
++{
++	TVPXP3ArchiveContentFilter = filter;
++}
++//---------------------------------------------------------------------------
+ 
+ 
+ 
+@@ -559,11 +565,24 @@ tTJSBinaryStream * tTVPXP3Archive::CreateStreamByIndex(tjs_uint idx)
+ 
+ 	tTJSBinaryStream *stream = TVPGetCachedArchiveHandle(this, Name);
+ 
+-	tTJSBinaryStream *out;
+-	try
+-	{
+-		out = new tTVPXP3ArchiveStream(this, idx, &(item.Segments), stream,
+-			item.OrgSize);
++	tTVPXP3ArchiveStream *out;
++	try
++	{
++		out = new tTVPXP3ArchiveStream(this, idx, &(item.Segments), stream,
++			item.OrgSize);
++		if(TVPXP3ArchiveContentFilter)
++		{
++			const tjs_int result = TVPXP3ArchiveContentFilter(item.Name, Name,
++				item.OrgSize, &out->GetFilterContext());
++			if(result == 1)
++			{
++				tTVPMemoryStream *memory = new tTVPMemoryStream();
++				memory->SetSize(item.OrgSize);
++				out->ReadBuffer(memory->GetInternalBuffer(), item.OrgSize);
++				delete out;
++				return memory;
++			}
++		}
+ 	}
+ 	catch(...)
+ 	{
+@@ -1017,10 +1036,10 @@ tjs_uint TJS_INTF_METHOD tTVPXP3ArchiveStream::Read(void *buffer, tjs_uint read_
+ 		// execute filter (for encryption method)
+ 		if(TVPXP3ArchiveExtractionFilter)
+ 		{
+-			tTVPXP3ExtractionFilterInfo info(CurPos, (tjs_uint8*)buffer + write_size,
+-				one_size, Owner->GetFileHash(StorageIndex));
+-			TVPXP3ArchiveExtractionFilter
+-				( (tTVPXP3ExtractionFilterInfo*) &info );
++			tTVPXP3ExtractionFilterInfo info(CurPos, (tjs_uint8*)buffer + write_size,
++				one_size, Owner->GetFileHash(StorageIndex), Owner->GetName(StorageIndex));
++			TVPXP3ArchiveExtractionFilter
++				( (tTVPXP3ExtractionFilterInfo*) &info, &FilterContext );
+ 		}
+ 
+ 		// adjust members
+diff --git a/base/XP3Archive.h b/base/XP3Archive.h
+index e413b047..fa4226d4 100644
+--- a/base/XP3Archive.h
++++ b/base/XP3Archive.h
+@@ -27,14 +27,15 @@ struct tTVPXP3ExtractionFilterInfo
+ 	const tjs_uint SizeOfSelf; // structure size of tTVPXP3ExtractionFilterInfo itself
+ 	const tjs_uint64 Offset; // offset of the buffer data in uncompressed stream position
+ 	void * Buffer; // target data buffer
+-	const tjs_uint BufferSize; // buffer size in bytes pointed by "Buffer"
+-	const tjs_uint32 FileHash; // hash value of the file (since inteface v2)
+-
+-	tTVPXP3ExtractionFilterInfo(tjs_uint64 offset, void *buffer,
+-		tjs_uint buffersize, tjs_uint32 filehash) :
+-			SizeOfSelf(sizeof(tTVPXP3ExtractionFilterInfo)),
+-			Offset(offset), Buffer(buffer), BufferSize(buffersize),
+-			FileHash(filehash) {;}
++	const tjs_uint BufferSize; // buffer size in bytes pointed by "Buffer"
++	const tjs_uint32 FileHash; // hash value of the file (since inteface v2)
++	const ttstr &FileName;
++
++	tTVPXP3ExtractionFilterInfo(tjs_uint64 offset, void *buffer,
++		tjs_uint buffersize, tjs_uint32 filehash, const ttstr &filename) :
++			SizeOfSelf(sizeof(tTVPXP3ExtractionFilterInfo)),
++			Offset(offset), Buffer(buffer), BufferSize(buffersize),
++			FileHash(filehash), FileName(filename) {;}
+ };
+ #pragma pack(pop)
+ 
+@@ -48,13 +49,17 @@ struct tTVPXP3ExtractionFilterInfo
+ 	// TVP_tTVPXP3ArchiveExtractionFilter_CONV is _stdcall on win32 platforms,
+ 	// for backward application compatibility.
+ 
+-typedef void (TVP_tTVPXP3ArchiveExtractionFilter_CONVENTION *
+-	tTVPXP3ArchiveExtractionFilter)(tTVPXP3ExtractionFilterInfo *info);
++typedef void (TVP_tTVPXP3ArchiveExtractionFilter_CONVENTION *
++	tTVPXP3ArchiveExtractionFilter)(tTVPXP3ExtractionFilterInfo *info, tTJSVariant *ctx);
++typedef tjs_int (TVP_tTVPXP3ArchiveExtractionFilter_CONVENTION *
++	tTVPXP3ArchiveContentFilter)(const ttstr &filepath, const ttstr &archivename,
++		tjs_uint64 filesize, tTJSVariant *ctx);
+ 
+ 
+ /*]*/
+ //---------------------------------------------------------------------------
+-TJS_EXP_FUNC_DEF(void, TVPSetXP3ArchiveExtractionFilter, (tTVPXP3ArchiveExtractionFilter filter));
++TJS_EXP_FUNC_DEF(void, TVPSetXP3ArchiveExtractionFilter, (tTVPXP3ArchiveExtractionFilter filter));
++TJS_EXP_FUNC_DEF(void, TVPSetXP3ArchiveContentFilter, (tTVPXP3ArchiveContentFilter filter));
+ //---------------------------------------------------------------------------
+ 
+ 
+@@ -162,13 +167,15 @@ class tTVPXP3ArchiveStream : public tTJSBinaryStream
+ 
+ 	tTVPSegmentData *SegmentData; // uncompressed segment data
+ 
+-	bool SegmentOpened;
++	bool SegmentOpened;
++	tTJSVariant FilterContext;
+ 
+ public:
+ 	tTVPXP3ArchiveStream(tTVPXP3Archive *owner, tjs_int storageindex,
+ 		std::vector<tTVPXP3ArchiveSegment> *segments, tTJSBinaryStream *stream,
+ 			tjs_uint64 orgsize);
+-	~tTVPXP3ArchiveStream();
++	~tTVPXP3ArchiveStream();
++	tTJSVariant &GetFilterContext() { return FilterContext; }
+ 
+ private:
+ 	void EnsureSegment(); // ensure accessing to current segment
+diff --git a/visual/LayerBitmapImpl.cpp b/visual/LayerBitmapImpl.cpp
+index deaaf699..361999be 100644
+--- a/visual/LayerBitmapImpl.cpp
++++ b/visual/LayerBitmapImpl.cpp
+@@ -39,7 +39,11 @@
+ #include "PrerenderedFont.h"
+ #include "FontSystem.h"
+ #include "FreeType.h"
+-#include "FreeTypeFontRasterizer.h"
++#ifdef KRKRVITA_PVF_FONT
++#include "VitaPvfFontRasterizer.h"
++#else
++#include "FreeTypeFontRasterizer.h"
++#endif
+ #ifdef _WIN32
+ #endif
+ #if defined(_WIN32) && !defined(TVP_COMPILING_KRKRSDL2)
+@@ -80,7 +84,11 @@ static tjs_int TVPCurrentFontRasterizers = FONT_RASTER_FREE_TYPE;
+ 
+ void TVPInializeFontRasterizers() {
+ 	if( TVPFontRasterizersInit == false ) {
+-		TVPFontRasterizers[FONT_RASTER_FREE_TYPE] = new FreeTypeFontRasterizer();
++#ifdef KRKRVITA_PVF_FONT
++		TVPFontRasterizers[FONT_RASTER_FREE_TYPE] = new VitaPvfFontRasterizer();
++#else
++		TVPFontRasterizers[FONT_RASTER_FREE_TYPE] = new FreeTypeFontRasterizer();
++#endif
+ #ifdef _WIN32
+ #endif
+ #if defined(_WIN32) && !defined(TVP_COMPILING_KRKRSDL2)

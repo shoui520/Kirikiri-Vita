@@ -1,3 +1,4 @@
+#include "krkrvita/bubble.hpp"
 #include "krkrvita/filter_heuristic.hpp"
 #include "krkrvita/game.hpp"
 #include "krkrvita/patch_manifest.hpp"
@@ -30,7 +31,9 @@ void usage() {
         << "  krkrvita-tool scan GAME_DIR\n"
         << "  krkrvita-tool resolve GAME_DIR ALLDATA_JS\n"
         << "  krkrvita-tool prepare GAME_DIR CACHE_DIR\n"
+        << "  krkrvita-tool vita-stage GAME_DIR CACHE_DIR OUTPUT_DIR [VITA_GAME_PATH]\n"
         << "  krkrvita-tool bubble-assets GAME_DIR OUTPUT_DIR [TITLE_ID]\n"
+        << "  krkrvita-tool bubble-stage GAME_DIR TEMPLATE_DIR OUTPUT_DIR [TITLE_ID]\n"
         << "  krkrvita-tool detect-filter HASH_HEX FILE_NAME SAMPLE [..]\n"
         << "  krkrvita-tool xp3-list ARCHIVE [LIMIT]\n"
         << "  krkrvita-tool xp3-detect ARCHIVE\n"
@@ -111,15 +114,30 @@ int command_resolve(const std::filesystem::path& game_path,
     return 0;
 }
 
-int command_prepare(const std::filesystem::path& game_path,
-                    const std::filesystem::path& cache_path) {
+struct PreparedGame {
+    GameDescriptor game;
+    GameProfile profile;
+    std::vector<CachedPatchFile> files;
+    FilterVerification verification;
+};
+
+PreparedGame prepare_game(const std::filesystem::path& game_path,
+                          const std::filesystem::path& cache_path) {
     auto game = GameScanner::scan(game_path);
     PatchRepository repository(cache_path);
     CurlHttpClient http;
     std::string error;
-    if (!std::filesystem::is_regular_file(repository.manifest_path()) &&
-        !repository.update_manifest(http, &error)) {
-        throw std::runtime_error(error);
+    bool manifest_valid = false;
+    if (std::filesystem::is_regular_file(repository.manifest_path())) {
+        try {
+            (void)repository.load_manifest();
+            manifest_valid = true;
+        } catch (const std::exception&) {
+            manifest_valid = false;
+        }
+    }
+    if (!manifest_valid) {
+        if (!repository.update_manifest(http, &error)) throw std::runtime_error(error);
     }
     const auto manifest = repository.load_manifest();
     const auto resolution = PatchResolver::resolve(game, manifest);
@@ -153,16 +171,70 @@ int command_prepare(const std::filesystem::path& game_path,
     if (!verify_retail_filter(game, profile.xp3_filter_path, &verification, &error)) {
         throw std::runtime_error(error);
     }
+    return {std::move(game), std::move(profile), std::move(files), verification};
+}
+
+int command_prepare(const std::filesystem::path& game_path,
+                    const std::filesystem::path& cache_path) {
+    auto prepared = prepare_game(game_path, cache_path);
+    auto& profile = prepared.profile;
+    std::string error;
     const auto profile_path = cache_path / "profiles" / (profile.game_id + ".ini");
     if (!profile.save(profile_path, &error)) throw std::runtime_error(error);
-    for (const auto& file : files) {
+    for (const auto& file : prepared.files) {
         std::cout << "cached: " << file.cache_path << " sha256=" << file.sha256 << '\n';
     }
     std::cout << "xp3_filter: " << profile.xp3_filter_path << '\n'
               << "filter_origin: " << profile.filter_origin << '\n'
-              << "filter_verified: " << verification.recognized << '/'
-              << verification.samples << '\n';
+              << "filter_verified: " << prepared.verification.recognized << '/'
+              << prepared.verification.samples << '\n';
     std::cout << "profile: " << profile_path << '\n';
+    return 0;
+}
+
+int command_vita_stage(const std::filesystem::path& game_path,
+                       const std::filesystem::path& cache_path,
+                       const std::filesystem::path& output_path,
+                       std::string vita_game_path) {
+    auto prepared = prepare_game(game_path, cache_path);
+    if (vita_game_path.empty()) vita_game_path = "ux0:data/krkrvita/game";
+
+    const auto local_patch_root = output_path / "patches" / prepared.profile.game_id;
+    const std::string vita_patch_root =
+        "ux0:data/krkrvita/patches/" + prepared.profile.game_id;
+    std::filesystem::create_directories(local_patch_root);
+
+    std::map<std::string, std::filesystem::path> staged;
+    for (const auto& file : prepared.files) {
+        const auto leaf = std::filesystem::path(file.relative_path).filename().string();
+        const auto destination = local_patch_root / leaf;
+        std::filesystem::copy_file(file.cache_path, destination,
+                                   std::filesystem::copy_options::overwrite_existing);
+        staged[leaf] = destination;
+    }
+    if (!prepared.profile.xp3_filter_path.empty() && !staged.count("xp3filter.tjs")) {
+        const auto destination = local_patch_root / "xp3filter.tjs";
+        std::filesystem::copy_file(prepared.profile.xp3_filter_path, destination,
+                                   std::filesystem::copy_options::overwrite_existing);
+        staged["xp3filter.tjs"] = destination;
+    }
+
+    prepared.profile.game_path = vita_game_path;
+    prepared.profile.patch_root = vita_patch_root;
+    prepared.profile.xp3_filter_path = vita_patch_root + "/xp3filter.tjs";
+    std::string error;
+    const auto active_profile = output_path / "active.ini";
+    if (!prepared.profile.save(active_profile, &error)) throw std::runtime_error(error);
+    const auto stored_profile =
+        output_path / "profiles" / (prepared.profile.game_id + ".ini");
+    if (!prepared.profile.save(stored_profile, &error)) throw std::runtime_error(error);
+
+    std::cout << "stage_root: " << output_path << '\n'
+              << "copy_to: ux0:data/krkrvita\n"
+              << "game_copy_to: " << vita_game_path << '\n'
+              << "active_profile: " << active_profile << '\n'
+              << "stored_profile: " << stored_profile << '\n';
+    for (const auto& item : staged) std::cout << "staged: " << item.second << '\n';
     return 0;
 }
 
@@ -192,6 +264,28 @@ int command_bubble_assets(const std::filesystem::path& game_path,
     std::cout << "title_id: " << title_id << '\n'
               << "title: " << game.display_name << '\n'
               << "icon0: " << output_path / "sce_sys/icon0.png" << '\n';
+    return 0;
+}
+
+int command_bubble_stage(const std::filesystem::path& game_path,
+                         const std::filesystem::path& template_path,
+                         const std::filesystem::path& output_path,
+                         std::string title_id) {
+    const auto game = GameScanner::scan(game_path);
+    if (title_id.empty()) title_id = bubble_title_id(game);
+    BubbleSpec spec;
+    spec.title = game.display_name;
+    spec.title_id = title_id;
+    spec.game_id = game.fingerprint.substr(0, 16);
+    spec.executable = game.executable;
+    std::string error;
+    if (!stage_bubble(spec, template_path, output_path, &error)) {
+        throw std::runtime_error(error);
+    }
+    std::cout << "title_id: " << title_id << '\n'
+              << "title: " << game.display_name << '\n'
+              << "game_id: " << spec.game_id << '\n'
+              << "stage_root: " << output_path << '\n';
     return 0;
 }
 
@@ -376,8 +470,16 @@ int main(int argc, char** argv) {
         if (command == "scan" && argc == 3) return command_scan(argv[2]);
         if (command == "resolve" && argc == 4) return command_resolve(argv[2], argv[3]);
         if (command == "prepare" && argc == 4) return command_prepare(argv[2], argv[3]);
+        if (command == "vita-stage" && (argc == 5 || argc == 6)) {
+            return command_vita_stage(argv[2], argv[3], argv[4],
+                                      argc == 6 ? argv[5] : "");
+        }
         if (command == "bubble-assets" && (argc == 4 || argc == 5)) {
             return command_bubble_assets(argv[2], argv[3], argc == 5 ? argv[4] : "");
+        }
+        if (command == "bubble-stage" && (argc == 5 || argc == 6)) {
+            return command_bubble_stage(argv[2], argv[3], argv[4],
+                                        argc == 6 ? argv[5] : "");
         }
         if (command == "detect-filter") return command_detect_filter(argc, argv);
         if (command == "xp3-list" && (argc == 3 || argc == 4)) {

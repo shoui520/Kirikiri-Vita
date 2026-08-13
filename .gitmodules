@@ -3,3 +3,9 @@
 	path = vendor/yuri
 	url = https://github.com/YuriSizuku/Kirikiroid2Yuri.git
 	branch = yuri
+[submodule "vendor/oniguruma"]
+	path = vendor/oniguruma
+	url = https://github.com/kkos/oniguruma.git
+[submodule "vendor/krkrsdl2"]
+	path = vendor/krkrsdl2
+	url = https://github.com/krkrsdl2/krkrsdl2.git
