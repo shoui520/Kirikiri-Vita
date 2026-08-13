@@ -189,6 +189,7 @@ struct VitaRenderer::Impl {
         }
         if (!japanese_font || pvf_error < 0 ||
             scePvfSetCharSize(japanese_font, kPvfBaseSize, kPvfBaseSize) < 0) {
+            if (japanese_font) scePvfClose(japanese_font);
             japanese_font = nullptr;
             if (error) *error = "SYSTEM JAPANESE FONT OPEN FAILED";
             return false;
