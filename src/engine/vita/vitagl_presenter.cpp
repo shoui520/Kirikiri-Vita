@@ -52,16 +52,26 @@ bool krkrvita_vitagl_initialize() {
         return false;
     }
     krkrvita_boot_trace("vitagl-shader-compiler-found");
-    if (!vglInitExtended(0, kScreenWidth, kScreenHeight, kVitaGlMemory,
-                         SCE_GXM_MULTISAMPLE_NONE)) {
-        krkrvita_report_launch_error("VitaGL initialization failed.");
-        return false;
-    }
+    // Despite its GLboolean type, vitaGL returns whether it had to fall back
+    // to a smaller display resolution here. GL_FALSE is the normal result at
+    // the Vita's native 960x544 resolution; it does not mean initialization
+    // failed. The library has no recoverable failure return from this API.
+    const GLboolean resolution_fallback =
+        vglInitExtended(0, kScreenWidth, kScreenHeight, kVitaGlMemory,
+                        SCE_GXM_MULTISAMPLE_NONE);
+    krkrvita_boot_trace("vitagl-init-returned");
+    if (resolution_fallback)
+        krkrvita_boot_trace("vitagl-resolution-fallback");
     krkrvita_boot_trace("vitagl-initialized");
     initialized = true;
     configure_2d();
     glGenTextures(1, &texture);
-    return texture != 0;
+    if (texture == 0) {
+        krkrvita_report_launch_error("VitaGL could not allocate the presentation texture.");
+        return false;
+    }
+    krkrvita_boot_trace("vitagl-presentation-texture-ready");
+    return true;
 }
 
 bool krkrvita_vitagl_resize(int width, int height) {
