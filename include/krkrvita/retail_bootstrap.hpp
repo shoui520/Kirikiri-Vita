@@ -14,3 +14,7 @@ void krkrvita_resolve_launch(int &argc, char **&argv);
 
 // Writes ux0:data/krkrvita/error.txt using the raw diagnostic path.
 void krkrvita_report_launch_error(const char *message);
+
+// True when this process has already written a specific launch error. This
+// prevents outer startup layers from replacing it with a generic message.
+bool krkrvita_launch_error_reported();

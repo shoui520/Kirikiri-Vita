@@ -1,8 +1,21 @@
 diff --git a/base/ScriptMgnIntf.cpp b/base/ScriptMgnIntf.cpp
-index 76ffe10f..4f113dc4 100644
+index 76ffe10f..c9828aef 100644
 --- a/base/ScriptMgnIntf.cpp
 +++ b/base/ScriptMgnIntf.cpp
-@@ -247,10 +247,14 @@ void TVPInitScriptEngine()
+@@ -52,7 +52,11 @@
+ #endif
+ #include "SystemImpl.h"
+ #include "BitmapLayerTreeOwner.h"
+-#include "Extension.h"
++#include "Extension.h"
++
++#ifdef KRKRVITA_RETAIL
++#include "krkrvita/retail_bootstrap.hpp"
++#endif
+ 
+ #ifdef KRKRZ_ENABLE_CANVAS
+ #include "CanvasIntf.h"
+@@ -247,10 +251,14 @@ void TVPInitScriptEngine()
  	dsp = new tTJSNC_BasicDrawDevice();
  	val = tTJSVariant(dsp);
  	dsp->Release();
@@ -21,7 +34,7 @@ index 76ffe10f..4f113dc4 100644
  	TVPCauseAtInstallExtensionClass( global );
  
  	// Garbage Collection Hook
-@@ -580,14 +584,18 @@ void TVPDumpScriptEngine()
+@@ -580,14 +588,18 @@ void TVPDumpScriptEngine()
  //---------------------------------------------------------------------------
  // TVPExecuteStartupScript
  //---------------------------------------------------------------------------
@@ -48,6 +61,117 @@ index 76ffe10f..4f113dc4 100644
  			TVPExecuteStorage(TVPStartupScriptName);
  			TVPAddLog( (const tjs_char*)TVPInfoStartupScriptEnded );
  		}
+@@ -825,11 +837,17 @@ void TVPShowScriptException(eTJS &e)
+ 	TVPOnError();
+ 
+ 	if(!TVPSystemUninitCalled)
+-	{
+-		ttstr errstr = (ttstr(TVPScriptExceptionRaised) + TJS_W("\n") + e.GetMessage());
+-		TVPAddLog(ttstr(TVPScriptExceptionRaised) + TJS_W("\n") + e.GetMessage());
+-		Application->MessageDlg( errstr.AsStdString(), tjs_string(), mtError, mbOK );
+-		TVPTerminateSync(1);
++	{
++		ttstr errstr = (ttstr(TVPScriptExceptionRaised) + TJS_W("\n") + e.GetMessage());
++		TVPAddLog(ttstr(TVPScriptExceptionRaised) + TJS_W("\n") + e.GetMessage());
++#ifdef KRKRVITA_RETAIL
++		const std::string message = errstr.AsNarrowStdString();
++		krkrvita_boot_trace("startup-script-exception");
++		krkrvita_report_launch_error(message.c_str());
++#else
++		Application->MessageDlg( errstr.AsStdString(), tjs_string(), mtError, mbOK );
++#endif
++		TVPTerminateSync(1);
+ 	}
+ }
+ //---------------------------------------------------------------------------
+@@ -842,9 +860,20 @@ void TVPShowScriptException(eTJSScriptError &e)
+ 	{
+ 		ttstr errstr = (ttstr(TVPScriptExceptionRaised) + TJS_W("\n") + e.GetMessage());
+ 		TVPAddLog(ttstr(TVPScriptExceptionRaised) + TJS_W("\n") + e.GetMessage());
+-		if(e.GetTrace().GetLen() != 0)
+-			TVPAddLog(ttstr(TJS_W("trace : ")) + e.GetTrace());
+-		Application->MessageDlg( errstr.AsStdString(), Application->GetTitle(), mtStop, mbOK );
++		if(e.GetTrace().GetLen() != 0)
++			TVPAddLog(ttstr(TJS_W("trace : ")) + e.GetTrace());
++#ifdef KRKRVITA_RETAIL
++		std::string message = errstr.AsNarrowStdString();
++		if(e.GetTrace().GetLen() != 0)
++		{
++			message += "\ntrace : ";
++			message += e.GetTrace().AsNarrowStdString();
++		}
++		krkrvita_boot_trace("startup-script-exception");
++		krkrvita_report_launch_error(message.c_str());
++#else
++		Application->MessageDlg( errstr.AsStdString(), Application->GetTitle(), mtStop, mbOK );
++#endif
+ 
+ #ifdef TVP_ENABLE_EXECUTE_AT_EXCEPTION
+ 		const tjs_char* scriptName = e.GetBlockNoAddRef()->GetName();
+diff --git a/base/SysInitIntf.cpp b/base/SysInitIntf.cpp
+index cd5da649..6ef1ca6a 100644
+--- a/base/SysInitIntf.cpp
++++ b/base/SysInitIntf.cpp
+@@ -17,7 +17,11 @@
+ #include "tjsUtils.h"
+ #include "SysInitIntf.h"
+ #include "ScriptMgnIntf.h"
+-#include "tvpgl.h"
++#include "tvpgl.h"
++
++#ifdef KRKRVITA_RETAIL
++#include "krkrvita/retail_bootstrap.hpp"
++#endif
+ 
+ 
+ //---------------------------------------------------------------------------
+@@ -33,17 +37,35 @@ extern void TVPGL_C_Init();
+ //---------------------------------------------------------------------------
+ // TVPSystemInit : Entire System Initialization
+ //---------------------------------------------------------------------------
+-void TVPSystemInit(void)
+-{
+-	TVPBeforeSystemInit();
+-
+-	TVPInitScriptEngine();
+-
+-	TVPInitTVPGL();
+-	TVPGL_C_Init();
+-
+-	TVPAfterSystemInit();
+-}
++void TVPSystemInit(void)
++{
++#ifdef KRKRVITA_RETAIL
++	krkrvita_boot_trace("engine-system-init-entered");
++#endif
++	TVPBeforeSystemInit();
++#ifdef KRKRVITA_RETAIL
++	krkrvita_boot_trace("engine-before-system-init-complete");
++#endif
++
++	TVPInitScriptEngine();
++#ifdef KRKRVITA_RETAIL
++	krkrvita_boot_trace("engine-system-script-engine-ready");
++#endif
++
++	TVPInitTVPGL();
++#ifdef KRKRVITA_RETAIL
++	krkrvita_boot_trace("engine-tvpgl-initialized");
++#endif
++	TVPGL_C_Init();
++#ifdef KRKRVITA_RETAIL
++	krkrvita_boot_trace("engine-tvpgl-c-initialized");
++#endif
++
++	TVPAfterSystemInit();
++#ifdef KRKRVITA_RETAIL
++	krkrvita_boot_trace("engine-after-system-init-complete");
++#endif
++}
+ //---------------------------------------------------------------------------
+ 
+ 
 diff --git a/base/XP3Archive.cpp b/base/XP3Archive.cpp
 index 19b09ec2..376c1d65 100644
 --- a/base/XP3Archive.cpp

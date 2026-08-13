@@ -16,6 +16,7 @@ namespace {
 
 std::vector<std::string> launch_arguments;
 std::vector<char *> launch_argument_pointers;
+bool launch_error_reported = false;
 
 std::string trim(std::string value)
 {
@@ -118,6 +119,7 @@ std::string discover_single_game()
 
 void report_launch_error(const std::string &message)
 {
+	launch_error_reported = true;
 	krkrvita_write_error(message.c_str());
 	krkrvita_boot_trace("fatal-error-written");
 }
@@ -127,6 +129,11 @@ void report_launch_error(const std::string &message)
 void krkrvita_report_launch_error(const char *message)
 {
 	report_launch_error(message ? message : "Unknown startup error");
+}
+
+bool krkrvita_launch_error_reported()
+{
+	return launch_error_reported;
 }
 
 void krkrvita_resolve_launch(int &argc, char **&argv)

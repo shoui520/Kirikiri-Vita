@@ -74,10 +74,20 @@ index 9503505..8c02ca7 100644
  endif()
  
 diff --git a/src/core/base/sdl2/SysInitImpl.cpp b/src/core/base/sdl2/SysInitImpl.cpp
-index bea8d95..1d29820 100644
+index bea8d95..b4177dc 100644
 --- a/src/core/base/sdl2/SysInitImpl.cpp
 +++ b/src/core/base/sdl2/SysInitImpl.cpp
-@@ -1282,7 +1282,9 @@ void TVPBeforeSystemInit()
+@@ -51,6 +51,9 @@
+ #include "TVPScreen.h"
+ #endif
+ #include "TickCount.h"
++#ifdef KRKRVITA_RETAIL
++#include "krkrvita/retail_bootstrap.hpp"
++#endif
+ #include <SDL.h>
+ #include <errno.h>
+ #ifdef __APPLE__
+@@ -1282,7 +1285,9 @@ void TVPBeforeSystemInit()
  		TVPAddImportantLog( TVPFormatMessage(TVPInfoSelectedProjectDirectory, TVPProjectDir) );
  	}
  #endif
@@ -88,7 +98,7 @@ index bea8d95..1d29820 100644
  	char *base_path = SDL_GetBasePath();
  	std::string base_path_utf8;
  	if (base_path)
-@@ -1358,8 +1360,9 @@ void TVPBeforeSystemInit()
+@@ -1358,8 +1363,9 @@ void TVPBeforeSystemInit()
  			TVPProjectDirSelected = true;
  		}
  	}
@@ -99,7 +109,7 @@ index bea8d95..1d29820 100644
  	if (!TVPProjectDirSelected)
  	{
  		tjs_string dir_utf16;
-@@ -1460,6 +1463,13 @@ void TVPAfterSystemInit()
+@@ -1460,6 +1466,13 @@ void TVPAfterSystemInit()
  	// check CPU type
  	TVPDetectCPU();
  
@@ -113,16 +123,27 @@ index bea8d95..1d29820 100644
  #if 0
  	// dump display device
  	TVPDumpDisplayDevices();
-@@ -2211,7 +2221,3 @@ bool TVPExecuteUserConfig()
+@@ -1686,6 +1699,9 @@ void TVPTerminateAsync(int code)
+ void TVPTerminateSync(int code)
+ {
+ 	// do synchronous temination of application (never return)
++#ifdef KRKRVITA_RETAIL
++	krkrvita_boot_trace("engine-synchronous-termination");
++#endif
+ 	TVPSystemUninit();
+ 	exit(code);
+ }
+@@ -2210,8 +2226,3 @@ bool TVPExecuteUserConfig()
+ 	return true;
  }
  //---------------------------------------------------------------------------
- 
+-
 -
 -
 -
 -
 diff --git a/src/core/environ/sdl2/Application.cpp b/src/core/environ/sdl2/Application.cpp
-index daf2ed5..2c4a886 100644
+index daf2ed5..1bb4aa3 100644
 --- a/src/core/environ/sdl2/Application.cpp
 +++ b/src/core/environ/sdl2/Application.cpp
 @@ -55,6 +55,9 @@
@@ -135,7 +156,107 @@ index daf2ed5..2c4a886 100644
  #ifndef _WIN32
  #include <unistd.h>
  #endif
-@@ -749,6 +752,13 @@ void tTVPApplication::BringToFront() {
+@@ -439,6 +442,10 @@ const tjs_char* SECodeToMessage( unsigned int code ) {
+ bool tTVPApplication::StartApplication( int argc, tjs_char* argv[] ) {
+ 	// _set_se_translator(se_translator_function);
+ 
++#ifdef KRKRVITA_RETAIL
++	krkrvita_boot_trace("engine-start-application-entered");
++#endif
++
+ 	ArgC = argc;
+ 	ArgV = argv;
+ #if 0
+@@ -451,6 +458,9 @@ bool tTVPApplication::StartApplication( int argc, tjs_char* argv[] ) {
+ 	TVPTerminateCode = 0;
+ 
+ 	CheckConsole();
++#ifdef KRKRVITA_RETAIL
++	krkrvita_boot_trace("engine-console-check-complete");
++#endif
+ 
+ 	// try starting the program!
+ 	bool engine_init = false;
+@@ -461,12 +471,21 @@ bool tTVPApplication::StartApplication( int argc, tjs_char* argv[] ) {
+ 
+ 		TVPInitScriptEngine();
+ 		engine_init = true;
++#ifdef KRKRVITA_RETAIL
++		krkrvita_boot_trace("engine-script-engine-initialized");
++#endif
+ 
+ 		// banner
+ 		TVPAddImportantLog( TVPFormatMessage(TVPProgramStartedOn, TVPGetOSName(), TVPGetPlatformName()) );
++#ifdef KRKRVITA_RETAIL
++		krkrvita_boot_trace("engine-banner-logged");
++#endif
+ 
+ 		// TVPInitializeBaseSystems
+ 		TVPInitializeBaseSystems();
++#ifdef KRKRVITA_RETAIL
++		krkrvita_boot_trace("engine-base-systems-initialized");
++#endif
+ 
+ #if 0
+ 		Initialize();
+@@ -480,11 +499,17 @@ bool tTVPApplication::StartApplication( int argc, tjs_char* argv[] ) {
+ #endif
+ 
+ 		TVPSystemInit();
++#ifdef KRKRVITA_RETAIL
++		krkrvita_boot_trace("engine-system-initialized");
++#endif
+ 
+ 		if(TVPCheckAbout()) return true; // version information dialog box;
+ 
+ 		SetTitle( tjs_string(TVPKirikiri) );
+ 		TVPSystemControl = new tTVPSystemControl();
++#ifdef KRKRVITA_RETAIL
++		krkrvita_boot_trace("engine-system-control-created");
++#endif
+ #if 0
+ #ifndef TVP_IGNORE_LOAD_TPM_PLUGIN
+ 		TVPLoadPluigins(); // load plugin module *.tpm
+@@ -498,7 +523,16 @@ bool tTVPApplication::StartApplication( int argc, tjs_char* argv[] ) {
+ 		image_load_thread_->StartTread();
+ #endif
+ 
+-		if(TVPProjectDirSelected) TVPInitializeStartupScript();
++		if(TVPProjectDirSelected)
++		{
++#ifdef KRKRVITA_RETAIL
++			krkrvita_boot_trace("startup-script-entered");
++#endif
++			TVPInitializeStartupScript();
++#ifdef KRKRVITA_RETAIL
++			krkrvita_boot_trace("startup-script-complete");
++#endif
++		}
+ 
+ #if 0
+ 		Run();
+@@ -521,6 +555,9 @@ bool tTVPApplication::StartApplication( int argc, tjs_char* argv[] ) {
+ 		return false;
+ 	} catch( const EAbort & ) {
+ 		// nothing to do
++#ifdef KRKRVITA_RETAIL
++		krkrvita_boot_trace("engine-startup-aborted");
++#endif
+ 	} catch( const Exception &exception ) {
+ 		TVPOnError();
+ 		if(!TVPSystemUninitCalled)
+@@ -612,6 +649,10 @@ void tTVPApplication::CheckConsole() {
+ 			is_attach_console_ = GetConsoleMode(hStdOutput, &mode) != 0;
+ 		}
+ 	}
++#elif defined(__vita__)
++	// LiveArea applications do not own a Unix terminal. newlib's stdout
++	// object is not a valid terminal probe during process startup.
++	is_attach_console_ = false;
+ #else
+ 	is_attach_console_ = isatty(fileno(stdout)) != 0;
+ #endif
+@@ -749,6 +790,13 @@ void tTVPApplication::BringToFront() {
  	}
  }
  void tTVPApplication::ShowException( const tjs_char* e ) {
@@ -150,10 +271,10 @@ index daf2ed5..2c4a886 100644
  	::MessageBox( NULL, e, TVPFatalError, MB_OK );
  #endif
 diff --git a/src/core/sdl2/SDLApplication.cpp b/src/core/sdl2/SDLApplication.cpp
-index 48c7820..a0c6563 100644
+index 48c7820..676f1e6 100644
 --- a/src/core/sdl2/SDLApplication.cpp
 +++ b/src/core/sdl2/SDLApplication.cpp
-@@ -17,6 +17,10 @@
+@@ -17,6 +17,13 @@
  #include "tjsArray.h"
  #include "StorageIntf.h"
  #include "SDLBitmapCompletion.h"
@@ -161,10 +282,13 @@ index 48c7820..a0c6563 100644
 +#include "krkrvita/vitagl_presenter.hpp"
 +#include "krkrvita/vita_input_bridge.hpp"
 +#endif
++#ifdef KRKRVITA_RETAIL
++#include "krkrvita/retail_bootstrap.hpp"
++#endif
  #include "ScriptMgnIntf.h"
  #include "SystemControl.h"
  #include "PluginImpl.h"
-@@ -527,12 +531,16 @@ protected:
+@@ -527,12 +534,16 @@ protected:
  #ifdef KRKRSDL2_ENABLE_ZOOM
  	tTVPRect FullScreenDestRect;
  	tTVPRect LastSentDrawDeviceDestRect;
@@ -181,7 +305,7 @@ index 48c7820..a0c6563 100644
  	tjs_int ZoomDenom = 1; // Zooming factor denominator (setting)
  	tjs_int ZoomNumer = 1; // Zooming factor numerator (setting)
  	tjs_int ActualZoomDenom = 1; // Zooming factor denominator (actual)
-@@ -816,6 +824,23 @@ TVPWindowWindow::TVPWindowWindow(tTJSNI_Window *w)
+@@ -816,6 +827,23 @@ TVPWindowWindow::TVPWindowWindow(tTJSNI_Window *w)
  	this->openGlScreen = nullptr;
  #endif
  	this->surface = nullptr;
@@ -205,7 +329,7 @@ index 48c7820..a0c6563 100644
  #ifdef KRKRZ_ENABLE_CANVAS
  	if (TVPIsEnableDrawDevice())
  #endif
-@@ -854,6 +879,7 @@ TVPWindowWindow::TVPWindowWindow(tTJSNI_Window *w)
+@@ -854,6 +882,7 @@ TVPWindowWindow::TVPWindowWindow(tTJSNI_Window *w)
  			SDL_SetRenderDrawColor(this->renderer, 0x00, 0x00, 0x00, 0xFF);
  		}
  	}
@@ -213,7 +337,7 @@ index 48c7820..a0c6563 100644
  #ifdef _WIN32
  	::SetWindowLongPtr(this->GetHandle(), GWLP_USERDATA, (LONG_PTR)this);
  #endif
-@@ -897,6 +923,13 @@ TVPWindowWindow::~TVPWindowWindow()
+@@ -897,6 +926,13 @@ TVPWindowWindow::~TVPWindowWindow()
  		SDL_FreeSurface(this->surface);
  		this->surface = nullptr;
  	}
@@ -227,7 +351,7 @@ index 48c7820..a0c6563 100644
  	if (this->renderer)
  	{
  		SDL_DestroyRenderer(this->renderer);
-@@ -927,10 +960,24 @@ TVPWindowWindow::~TVPWindowWindow()
+@@ -927,10 +963,24 @@ TVPWindowWindow::~TVPWindowWindow()
  
  void TVPWindowWindow::SetPaintBoxSize(tjs_int w, tjs_int h)
  {
@@ -253,7 +377,7 @@ index 48c7820..a0c6563 100644
  	if (this->renderer)
  	{
  		if (this->texture)
-@@ -956,6 +1003,7 @@ void TVPWindowWindow::SetPaintBoxSize(tjs_int w, tjs_int h)
+@@ -956,6 +1006,7 @@ void TVPWindowWindow::SetPaintBoxSize(tjs_int w, tjs_int h)
  		}
  		this->bitmapCompletion->surface = this->surface;
  	}
@@ -261,7 +385,7 @@ index 48c7820..a0c6563 100644
  #ifndef KRKRSDL2_ENABLE_ZOOM
  	SDL_Rect cliprect;
  	cliprect.x = 0;
-@@ -993,6 +1041,23 @@ static int MulDiv(int nNumber, int nNumerator, int nDenominator)
+@@ -993,6 +1044,23 @@ static int MulDiv(int nNumber, int nNumerator, int nDenominator)
  
  void TVPWindowWindow::TranslateWindowToDrawArea(int &x, int &y)
  {
@@ -285,7 +409,7 @@ index 48c7820..a0c6563 100644
  #ifdef KRKRSDL2_ENABLE_ZOOM
  #ifdef KRKRZ_ENABLE_CANVAS
  	if (this->context)
-@@ -1009,6 +1074,19 @@ void TVPWindowWindow::TranslateWindowToDrawArea(int &x, int &y)
+@@ -1009,6 +1077,19 @@ void TVPWindowWindow::TranslateWindowToDrawArea(int &x, int &y)
  
  void TVPWindowWindow::TranslateDrawAreaToWindow(int &x, int &y)
  {
@@ -305,7 +429,7 @@ index 48c7820..a0c6563 100644
  #ifdef KRKRSDL2_ENABLE_ZOOM
  #ifdef KRKRZ_ENABLE_CANVAS
  	if (this->context)
-@@ -1676,6 +1754,10 @@ void TVPWindowWindow::Show()
+@@ -1676,6 +1757,10 @@ void TVPWindowWindow::Show()
  }
  void TVPWindowWindow::TickBeat()
  {
@@ -316,7 +440,7 @@ index 48c7820..a0c6563 100644
  	if (!this->visibilityHasInitialized)
  	{
  		this->visibilityHasInitialized = true;
-@@ -1690,6 +1772,14 @@ void TVPWindowWindow::TickBeat()
+@@ -1690,6 +1775,14 @@ void TVPWindowWindow::TickBeat()
  			rect.y = this->bitmapCompletion->update_rect.top;
  			rect.w = this->bitmapCompletion->update_rect.get_width();
  			rect.h = this->bitmapCompletion->update_rect.get_height();
@@ -331,7 +455,7 @@ index 48c7820..a0c6563 100644
  			if (this->renderer)
  			{
  #if defined(KRKRSDL2_ENABLE_ZOOM) || defined(KRKRSDL2_RENDERER_FULL_UPDATES)
-@@ -1758,6 +1848,7 @@ void TVPWindowWindow::TickBeat()
+@@ -1758,6 +1851,7 @@ void TVPWindowWindow::TickBeat()
  				SDL_UpdateWindowSurfaceRects(this->window, &rect, 1);
  				this->hasDrawn = true;
  			}
@@ -339,7 +463,7 @@ index 48c7820..a0c6563 100644
  			this->needsGraphicUpdate = false;
  		}
  	}
-@@ -2637,6 +2728,9 @@ bool TVPWindowWindow::window_receive_event_input(SDL_Event event)
+@@ -2637,6 +2731,9 @@ bool TVPWindowWindow::window_receive_event_input(SDL_Event event)
  	}
  	if (this->window && this->hasDrawn)
  	{
@@ -349,7 +473,53 @@ index 48c7820..a0c6563 100644
  		tjs_uint32 s = TVP_TShiftState_To_uint32(GetShiftState());
  		s |= GetMouseButtonState();
  		if (this->TJSNativeInstance->CanDeliverEvents())
-@@ -3159,13 +3253,32 @@ TShiftState TVP_TShiftState_From_uint32(tjs_uint32 state)
+@@ -3008,6 +3105,9 @@ void krkrsdl2_convert_set_args(int argc, char **argv)
+ 
+ bool krkrsdl2_init_platform(void)
+ {
++#ifdef KRKRVITA_RETAIL
++	krkrvita_boot_trace("platform-init-entered");
++#endif
+ #ifdef __SWITCH__
+ 	romfsInit();
+ 	socketInitializeDefault();
+@@ -3016,6 +3116,9 @@ bool krkrsdl2_init_platform(void)
+ 
+ 	SDL_setenv("VITA_DISABLE_TOUCH_BACK", "1", 1);
+ 	SDL_setenv("DBUS_FATAL_WARNINGS", "0", 0);
++#ifdef KRKRVITA_RETAIL
++	krkrvita_boot_trace("platform-environment-ready");
++#endif
+ 
+ #ifdef _WIN32
+ #ifdef SDL_HINT_AUDIODRIVER
+@@ -3031,6 +3134,9 @@ bool krkrsdl2_init_platform(void)
+ #endif
+ 
+ 	TVPLoadMessage();
++#ifdef KRKRVITA_RETAIL
++	krkrvita_boot_trace("engine-messages-loaded");
++#endif
+ 
+ #ifdef _WIN32
+ 	SDL_SetWindowsMessageHook(sdl_windows_message_hook, nullptr);
+@@ -3039,7 +3145,14 @@ bool krkrsdl2_init_platform(void)
+ 	SDL_AddEventWatch(sdl_event_watch, nullptr);
+ #endif
+ 	::Application = new tTVPApplication();
+-	return !!::Application->StartApplication(_argc, _wargv);
++#ifdef KRKRVITA_RETAIL
++	krkrvita_boot_trace("engine-application-created");
++#endif
++	const bool stopped = !!::Application->StartApplication(_argc, _wargv);
++#ifdef KRKRVITA_RETAIL
++	krkrvita_boot_trace("engine-start-application-returned");
++#endif
++	return stopped;
+ }
+ 
+ void krkrsdl2_run_main_loop(void)
+@@ -3159,13 +3272,32 @@ TShiftState TVP_TShiftState_From_uint32(tjs_uint32 state)
  	return result;
  }
  
@@ -384,7 +554,7 @@ index 48c7820..a0c6563 100644
  	}
  	static tjs_int ArgumentGeneration = 0;
  	if (ArgumentGeneration != TVPGetCommandLineArgumentGeneration())
-@@ -3209,7 +3322,7 @@ const ttstr &TVPGetDefaultFaceNames()
+@@ -3209,7 +3341,7 @@ const ttstr &TVPGetDefaultFaceNames()
  
  // Override allocation functions by removing the std::bad_alloc throw and doing garbage collection.
  #ifdef KRKRSDL2_OVERRIDE_NEW_ALLOCATOR_FUNCTIONS
@@ -393,7 +563,7 @@ index 48c7820..a0c6563 100644
  {
  	bool has_gced = false;
  
-@@ -3237,7 +3350,7 @@ void *operator new(size_t size, const std::nothrow_t&) noexcept
+@@ -3237,7 +3369,7 @@ void *operator new(size_t size, const std::nothrow_t&) noexcept
  	return p;
  }
  
@@ -402,7 +572,7 @@ index 48c7820..a0c6563 100644
  {
  	return ::operator new(size);
  }
-@@ -3280,7 +3393,7 @@ void operator delete[] (void *ptr, size_t) noexcept
+@@ -3280,7 +3412,7 @@ void operator delete[] (void *ptr, size_t) noexcept
  }
  
  #ifdef __cpp_aligned_new
@@ -411,7 +581,7 @@ index 48c7820..a0c6563 100644
  {
  	bool has_gced = false;
  
-@@ -3313,7 +3426,7 @@ void *operator new(size_t size, std::align_val_t alignment, const std::nothrow_t
+@@ -3313,7 +3445,7 @@ void *operator new(size_t size, std::align_val_t alignment, const std::nothrow_t
  	return p;
  }
  
@@ -421,7 +591,7 @@ index 48c7820..a0c6563 100644
  	return ::operator new(size, alignment);
  }
 diff --git a/src/core/sdl2/SDLEntrypoint.cpp b/src/core/sdl2/SDLEntrypoint.cpp
-index a4453a9..6c55a9b 100644
+index a4453a9..b0e357b 100644
 --- a/src/core/sdl2/SDLEntrypoint.cpp
 +++ b/src/core/sdl2/SDLEntrypoint.cpp
 @@ -3,9 +3,15 @@
@@ -440,7 +610,7 @@ index a4453a9..6c55a9b 100644
  
  #if defined(USE_SDL_MAIN)
  extern "C" int SDL_main(int argc, char **argv)
-@@ -15,30 +21,74 @@ extern "C" int wmain(int argc, wchar_t **argv)
+@@ -15,30 +21,75 @@ extern "C" int wmain(int argc, wchar_t **argv)
  extern "C" int main(int argc, char **argv)
  #endif
  {
@@ -471,8 +641,9 @@ index a4453a9..6c55a9b 100644
  		if (krkrsdl2_init_platform())
  		{
 +#ifdef KRKRVITA_RETAIL
-+			krkrvita_report_launch_error(
-+				"Engine platform initialization stopped before the main loop.");
++			if (!krkrvita_launch_error_reported())
++				krkrvita_report_launch_error(
++					"Engine platform initialization stopped before the main loop.");
 +#endif
  			TVPTerminateCode = 0;
  			return TVPTerminateCode;
@@ -515,7 +686,7 @@ index a4453a9..6c55a9b 100644
  		TVPTerminateCode = 2;
  		return TVPTerminateCode;
  	}
-@@ -47,4 +97,3 @@ extern "C" int main(int argc, char **argv)
+@@ -47,4 +98,3 @@ extern "C" int main(int argc, char **argv)
  #endif
  	return TVPTerminateCode;
  }
