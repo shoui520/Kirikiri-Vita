@@ -55,8 +55,13 @@ Install `build-vita-engine/krkrsdl2.vpk`, copy the untouched game directory to
 disabled pending safe hardware validation of their SFO and uninstall path.
 
 Upstream VitaGL requires `ur0:/data/libshacccg.suprx`; install it legally with
-ShaRKBR33D or VitaDB Downloader. Engine build `01.09` checks this before VitaGL
+ShaRKBR33D or VitaDB Downloader. Engine build `01.10` checks this before VitaGL
 startup. It also recreates `ux0:data/krkrvita/boot-status.txt` from a
 pre-constructor hook and uses raw Vita I/O for `error.txt`, so a launch that
 returns to LiveArea can be assigned to the loader, constructors, engine, or
 renderer without depending on the normal Kirikiri logger.
+
+Build `01.10` also restores Kirikiroid/Yuri's pointer-valued `Window.HWND`
+contract. Yuri's native `Window.menu` implementation uses that value to own
+and cache a complete `MenuItem` tree; SDL omitted the property on Vita, which
+made KAG's first `menu.add(...)` call operate on an invalid value.
