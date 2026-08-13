@@ -140,17 +140,46 @@ bool krkrvita_vitagl_present(const void* pixels, int pitch, int width, int heigh
     glClear(GL_COLOR_BUFFER_BIT);
     glEnable(GL_TEXTURE_2D);
     glColor4f(1, 1, 1, 1);
-    glBegin(GL_QUADS);
-    glTexCoord2f(0, 0); glVertex2f(left, top);
-    glTexCoord2f(1, 0); glVertex2f(left + output_width, top);
-    glTexCoord2f(1, 1); glVertex2f(left + output_width, top + output_height);
-    glTexCoord2f(0, 1); glVertex2f(left, top + output_height);
-    glEnd();
+
+    // vglInitExtended's first argument is the optional immediate-mode pool.
+    // We deliberately initialize it with zero bytes, so glBegin/glVertex is
+    // invalid here and writes through a null legacy_pool_ptr. Use VitaGL's
+    // supported fixed-function client arrays, as its own samples do.
+    const GLfloat vertices[] = {
+        left,                top,
+        left + output_width, top,
+        left,                top + output_height,
+        left + output_width, top + output_height,
+    };
+    const GLfloat texture_coordinates[] = {
+        0.0f, 0.0f,
+        1.0f, 0.0f,
+        0.0f, 1.0f,
+        1.0f, 1.0f,
+    };
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+    glVertexPointer(2, GL_FLOAT, 0, vertices);
+    glTexCoordPointer(2, GL_FLOAT, 0, texture_coordinates);
+    if (first_present) krkrvita_boot_trace("vitagl-first-game-frame-arrays-ready");
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    if (first_present) krkrvita_boot_trace("vitagl-first-game-frame-draw-submitted");
+
+    const GLenum draw_error = glGetError();
+    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+    glDisableClientState(GL_VERTEX_ARRAY);
     glDisable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, 0);
-    vglSwapBuffers(GL_FALSE);
-    if (glGetError() != GL_NO_ERROR) {
+    if (draw_error != GL_NO_ERROR) {
         if (first_present) krkrvita_boot_trace("vitagl-first-game-frame-draw-failed");
+        return false;
+    }
+
+    if (first_present) krkrvita_boot_trace("vitagl-first-game-frame-swap-entered");
+    vglSwapBuffers(GL_FALSE);
+    if (first_present) krkrvita_boot_trace("vitagl-first-game-frame-swap-returned");
+    if (glGetError() != GL_NO_ERROR) {
+        if (first_present) krkrvita_boot_trace("vitagl-first-game-frame-swap-failed");
         return false;
     }
     if (first_present) {
