@@ -326,7 +326,7 @@ index 2dd67c0..9016647 100644
  extern bool TVPProjectDirSelected;
  extern void TVPEnsureDataPathDirectory();
 diff --git a/src/core/environ/sdl2/Application.cpp b/src/core/environ/sdl2/Application.cpp
-index daf2ed5..9d23e64 100644
+index daf2ed5..3515bc6 100644
 --- a/src/core/environ/sdl2/Application.cpp
 +++ b/src/core/environ/sdl2/Application.cpp
 @@ -55,6 +55,9 @@
@@ -455,8 +455,39 @@ index daf2ed5..9d23e64 100644
  #if 0
  	::MessageBox( NULL, e, TVPFatalError, MB_OK );
  #endif
+@@ -774,6 +824,14 @@ extern "C" void EMSCRIPTEN_KEEPALIVE emscripten_syncfs_is_finished()
+ #endif
+ 
+ void tTVPApplication::Run() {
++#ifdef KRKRVITA_RETAIL
++	static bool first_run = true;
++	if (first_run)
++	{
++		krkrvita_boot_trace("engine-main-loop-first-iteration");
++		first_run = false;
++	}
++#endif
+ #if 0
+ 	TVPTerminateCode = 0;
+ 
+@@ -794,6 +852,15 @@ void tTVPApplication::Run() {
+ 		done = TVPSystemControl->ApplicationIdle();
+ 	}
+ 	tjs_int count = TVPGetWindowCount();
++#ifdef KRKRVITA_RETAIL
++	static bool window_count_reported = false;
++	if (!window_count_reported)
++	{
++		krkrvita_boot_trace(count > 0 ? "engine-main-loop-window-ready" :
++			"engine-main-loop-no-window");
++		window_count_reported = true;
++	}
++#endif
+ 	for( tjs_int i = 0; i<count; i++ ) {
+ 		tTJSNI_Window *win = TVPGetWindowListAt(i);
+ 		win->TickBeat();
 diff --git a/src/core/sdl2/SDLApplication.cpp b/src/core/sdl2/SDLApplication.cpp
-index 48c7820..676f1e6 100644
+index 48c7820..4d01d3f 100644
 --- a/src/core/sdl2/SDLApplication.cpp
 +++ b/src/core/sdl2/SDLApplication.cpp
 @@ -17,6 +17,13 @@
@@ -490,7 +521,27 @@ index 48c7820..676f1e6 100644
  	tjs_int ZoomDenom = 1; // Zooming factor denominator (setting)
  	tjs_int ZoomNumer = 1; // Zooming factor numerator (setting)
  	tjs_int ActualZoomDenom = 1; // Zooming factor denominator (actual)
-@@ -816,6 +827,23 @@ TVPWindowWindow::TVPWindowWindow(tTJSNI_Window *w)
+@@ -642,6 +653,9 @@ public:
+ 	virtual void Show() override;
+ 	/* Called from tTJSNI_Window */
+ 	virtual void TickBeat() override;
++#ifdef KRKRVITA_VITAGL
++	void PresentPendingFrame();
++#endif
+ 	/* Called from tTJSNI_Window */
+ 	virtual void InvalidateClose() override;
+ 	/* Called from tTJSNI_Window */
+@@ -791,6 +805,9 @@ TVPWindowWindow::TVPWindowWindow(tTJSNI_Window *w)
+ 	{
+ 		TVPThrowExceptionMessage(TJS_W("Cannot create SDL window: %1"), ttstr(SDL_GetError()));
+ 	}
++#if defined(KRKRVITA_VITAGL) && defined(KRKRVITA_RETAIL)
++	krkrvita_boot_trace("vita-sdl-window-created");
++#endif
+ #if defined(__EMSCRIPTEN__) && defined(KRKRSDL2_WINDOW_SIZE_IS_LAYER_SIZE)
+ 	EmscriptenFullscreenStrategy strategy;
+ 	SDL_memset(&strategy, 0, sizeof(strategy));
+@@ -816,6 +833,32 @@ TVPWindowWindow::TVPWindowWindow(tTJSNI_Window *w)
  	this->openGlScreen = nullptr;
  #endif
  	this->surface = nullptr;
@@ -502,19 +553,28 @@ index 48c7820..676f1e6 100644
 +	this->renderer = nullptr;
 +	this->texture = nullptr;
 +	this->bitmapCompletion = new TVPSDLBitmapCompletion();
-+	this->surface = SDL_CreateRGBSurface(0, new_window_w, new_window_h, 32,
++	// The Vita SDL fullscreen window deliberately uses a 0x0 requested size.
++	// That is not a valid CPU framebuffer size, so start with Kirikiri's
++	// initial logical layer size until NotifySrcResize supplies the game size.
++	this->surface = SDL_CreateRGBSurface(0, this->LayerWidth, this->LayerHeight, 32,
 +		0x00ff0000, 0x0000ff00, 0x000000ff, 0);
 +	if (!this->surface)
 +	{
 +		TVPThrowExceptionMessage(TJS_W("Cannot create VitaGL staging surface: %1"), ttstr(SDL_GetError()));
 +	}
 +	this->bitmapCompletion->surface = this->surface;
-+	krkrvita_vitagl_resize(new_window_w, new_window_h);
++	if (!krkrvita_vitagl_resize(this->LayerWidth, this->LayerHeight))
++	{
++		TVPThrowExceptionMessage(TJS_W("Cannot size initial VitaGL presentation surface"));
++	}
++#ifdef KRKRVITA_RETAIL
++	krkrvita_boot_trace("vita-staging-surface-ready");
++#endif
 +#else
  #ifdef KRKRZ_ENABLE_CANVAS
  	if (TVPIsEnableDrawDevice())
  #endif
-@@ -854,6 +882,7 @@ TVPWindowWindow::TVPWindowWindow(tTJSNI_Window *w)
+@@ -854,6 +897,7 @@ TVPWindowWindow::TVPWindowWindow(tTJSNI_Window *w)
  			SDL_SetRenderDrawColor(this->renderer, 0x00, 0x00, 0x00, 0xFF);
  		}
  	}
@@ -522,7 +582,7 @@ index 48c7820..676f1e6 100644
  #ifdef _WIN32
  	::SetWindowLongPtr(this->GetHandle(), GWLP_USERDATA, (LONG_PTR)this);
  #endif
-@@ -897,6 +926,13 @@ TVPWindowWindow::~TVPWindowWindow()
+@@ -897,6 +941,13 @@ TVPWindowWindow::~TVPWindowWindow()
  		SDL_FreeSurface(this->surface);
  		this->surface = nullptr;
  	}
@@ -536,33 +596,42 @@ index 48c7820..676f1e6 100644
  	if (this->renderer)
  	{
  		SDL_DestroyRenderer(this->renderer);
-@@ -927,10 +963,24 @@ TVPWindowWindow::~TVPWindowWindow()
+@@ -927,10 +978,33 @@ TVPWindowWindow::~TVPWindowWindow()
  
  void TVPWindowWindow::SetPaintBoxSize(tjs_int w, tjs_int h)
  {
 -#ifdef KRKRSDL2_ENABLE_ZOOM
++	if (w <= 0 || h <= 0)
++	{
++		TVPThrowExceptionMessage(TJS_W("Invalid presentation surface size"));
++	}
 +#if defined(KRKRSDL2_ENABLE_ZOOM) || defined(KRKRVITA_VITAGL)
  	this->LayerWidth = w;
  	this->LayerHeight = h;
  #endif
 +#ifdef KRKRVITA_VITAGL
++	SDL_Surface *replacement = SDL_CreateRGBSurface(0, w, h, 32,
++		0x00ff0000, 0x0000ff00, 0x000000ff, 0);
++	if (!replacement || !krkrvita_vitagl_resize(w, h))
++	{
++		if (replacement) SDL_FreeSurface(replacement);
++		TVPThrowExceptionMessage(TJS_W("Cannot resize VitaGL presentation surface"));
++	}
++	this->bitmapCompletion->surface = nullptr;
 +	if (this->surface)
 +	{
 +		SDL_FreeSurface(this->surface);
-+		this->surface = nullptr;
 +	}
-+	this->surface = SDL_CreateRGBSurface(0, w, h, 32,
-+		0x00ff0000, 0x0000ff00, 0x000000ff, 0);
-+	if (!this->surface || !krkrvita_vitagl_resize(w, h))
-+	{
-+		TVPThrowExceptionMessage(TJS_W("Cannot resize VitaGL presentation surface"));
-+	}
++	this->surface = replacement;
 +	this->bitmapCompletion->surface = this->surface;
++#ifdef KRKRVITA_RETAIL
++	krkrvita_boot_trace("vita-game-framebuffer-sized");
++#endif
 +#else
  	if (this->renderer)
  	{
  		if (this->texture)
-@@ -956,6 +1006,7 @@ void TVPWindowWindow::SetPaintBoxSize(tjs_int w, tjs_int h)
+@@ -956,6 +1030,7 @@ void TVPWindowWindow::SetPaintBoxSize(tjs_int w, tjs_int h)
  		}
  		this->bitmapCompletion->surface = this->surface;
  	}
@@ -570,7 +639,7 @@ index 48c7820..676f1e6 100644
  #ifndef KRKRSDL2_ENABLE_ZOOM
  	SDL_Rect cliprect;
  	cliprect.x = 0;
-@@ -993,6 +1044,23 @@ static int MulDiv(int nNumber, int nNumerator, int nDenominator)
+@@ -993,6 +1068,23 @@ static int MulDiv(int nNumber, int nNumerator, int nDenominator)
  
  void TVPWindowWindow::TranslateWindowToDrawArea(int &x, int &y)
  {
@@ -594,7 +663,7 @@ index 48c7820..676f1e6 100644
  #ifdef KRKRSDL2_ENABLE_ZOOM
  #ifdef KRKRZ_ENABLE_CANVAS
  	if (this->context)
-@@ -1009,6 +1077,19 @@ void TVPWindowWindow::TranslateWindowToDrawArea(int &x, int &y)
+@@ -1009,6 +1101,19 @@ void TVPWindowWindow::TranslateWindowToDrawArea(int &x, int &y)
  
  void TVPWindowWindow::TranslateDrawAreaToWindow(int &x, int &y)
  {
@@ -614,8 +683,78 @@ index 48c7820..676f1e6 100644
  #ifdef KRKRSDL2_ENABLE_ZOOM
  #ifdef KRKRZ_ENABLE_CANVAS
  	if (this->context)
-@@ -1676,6 +1757,10 @@ void TVPWindowWindow::Show()
+@@ -1419,6 +1524,11 @@ void TVPWindowWindow::SetSize(tjs_int w, tjs_int h)
  }
+ void TVPWindowWindow::GetSize(tjs_int &w, tjs_int &h)
+ {
++#ifdef KRKRVITA_VITAGL
++	w = this->LayerWidth;
++	h = this->LayerHeight;
++	return;
++#else
+ 	w = 0;
+ 	h = 0;
+ #ifndef KRKRSDL2_WINDOW_SIZE_IS_LAYER_SIZE
+@@ -1437,9 +1547,13 @@ void TVPWindowWindow::GetSize(tjs_int &w, tjs_int &h)
+ #endif
+ 		return;
+ 	}
++#endif
+ }
+ tjs_int TVPWindowWindow::GetWidth() const
+ {
++#ifdef KRKRVITA_VITAGL
++	return this->LayerWidth;
++#else
+ 	int w = 0;
+ #ifndef KRKRSDL2_WINDOW_SIZE_IS_LAYER_SIZE
+ 	if (this->window)
+@@ -1458,9 +1572,13 @@ tjs_int TVPWindowWindow::GetWidth() const
+ #endif
+ 	}
+ 	return w;
++#endif
+ }
+ tjs_int TVPWindowWindow::GetHeight() const
+ {
++#ifdef KRKRVITA_VITAGL
++	return this->LayerHeight;
++#else
+ 	int h = 0;
+ #ifndef KRKRSDL2_WINDOW_SIZE_IS_LAYER_SIZE
+ 	if (this->window)
+@@ -1479,6 +1597,7 @@ tjs_int TVPWindowWindow::GetHeight() const
+ #endif
+ 	}
+ 	return h;
++#endif
+ }
+ void TVPWindowWindow::SetMinWidth(tjs_int w)
+ {
+@@ -1673,9 +1792,32 @@ void TVPWindowWindow::Swap()
+ #endif
+ void TVPWindowWindow::Show()
+ {
++#ifdef KRKRVITA_VITAGL
++	this->PresentPendingFrame();
++#endif
++}
++
++#ifdef KRKRVITA_VITAGL
++void TVPWindowWindow::PresentPendingFrame()
++{
++	if (!this->needsGraphicUpdate || !this->surface) return;
++	if (!krkrvita_vitagl_present(this->surface->pixels, this->surface->pitch,
++		this->surface->w, this->surface->h))
++	{
++		TVPThrowExceptionMessage(TJS_W("Cannot present Kirikiri frame through VitaGL"));
++	}
++	this->hasDrawn = true;
++	this->needsGraphicUpdate = false;
++	this->bitmapCompletion->update_rect.clear();
+ }
++#endif
++
  void TVPWindowWindow::TickBeat()
  {
 +#ifdef KRKRVITA_VITAGL
@@ -625,30 +764,37 @@ index 48c7820..676f1e6 100644
  	if (!this->visibilityHasInitialized)
  	{
  		this->visibilityHasInitialized = true;
-@@ -1690,6 +1775,14 @@ void TVPWindowWindow::TickBeat()
+@@ -1690,6 +1832,9 @@ void TVPWindowWindow::TickBeat()
  			rect.y = this->bitmapCompletion->update_rect.top;
  			rect.w = this->bitmapCompletion->update_rect.get_width();
  			rect.h = this->bitmapCompletion->update_rect.get_height();
 +#ifdef KRKRVITA_VITAGL
-+			if (this->surface)
-+			{
-+				krkrvita_vitagl_present(this->surface->pixels, this->surface->pitch,
-+					this->surface->w, this->surface->h);
-+				this->hasDrawn = true;
-+			}
++			this->PresentPendingFrame();
 +#else
  			if (this->renderer)
  			{
  #if defined(KRKRSDL2_ENABLE_ZOOM) || defined(KRKRSDL2_RENDERER_FULL_UPDATES)
-@@ -1758,6 +1851,7 @@ void TVPWindowWindow::TickBeat()
+@@ -1758,7 +1903,10 @@ void TVPWindowWindow::TickBeat()
  				SDL_UpdateWindowSurfaceRects(this->window, &rect, 1);
  				this->hasDrawn = true;
  			}
 +#endif
++#ifndef KRKRVITA_VITAGL
  			this->needsGraphicUpdate = false;
++#endif
  		}
  	}
-@@ -2637,6 +2731,9 @@ bool TVPWindowWindow::window_receive_event_input(SDL_Event event)
+ #ifdef KRKRZ_ENABLE_CANVAS
+@@ -1975,7 +2123,7 @@ void TVPWindowWindow::UpdateWindow(tTVPUpdateType type)
+ 		return;
+ 	}
+ 	tTVPRect r;
+-#ifdef KRKRSDL2_ENABLE_ZOOM
++#if defined(KRKRSDL2_ENABLE_ZOOM) || defined(KRKRVITA_VITAGL)
+ 	r.left = 0;
+ 	r.top = 0;
+ 	r.right = this->LayerWidth;
+@@ -2637,6 +2785,9 @@ bool TVPWindowWindow::window_receive_event_input(SDL_Event event)
  	}
  	if (this->window && this->hasDrawn)
  	{
@@ -658,7 +804,7 @@ index 48c7820..676f1e6 100644
  		tjs_uint32 s = TVP_TShiftState_To_uint32(GetShiftState());
  		s |= GetMouseButtonState();
  		if (this->TJSNativeInstance->CanDeliverEvents())
-@@ -3008,6 +3105,9 @@ void krkrsdl2_convert_set_args(int argc, char **argv)
+@@ -3008,6 +3159,9 @@ void krkrsdl2_convert_set_args(int argc, char **argv)
  
  bool krkrsdl2_init_platform(void)
  {
@@ -668,7 +814,7 @@ index 48c7820..676f1e6 100644
  #ifdef __SWITCH__
  	romfsInit();
  	socketInitializeDefault();
-@@ -3016,6 +3116,9 @@ bool krkrsdl2_init_platform(void)
+@@ -3016,6 +3170,9 @@ bool krkrsdl2_init_platform(void)
  
  	SDL_setenv("VITA_DISABLE_TOUCH_BACK", "1", 1);
  	SDL_setenv("DBUS_FATAL_WARNINGS", "0", 0);
@@ -678,7 +824,7 @@ index 48c7820..676f1e6 100644
  
  #ifdef _WIN32
  #ifdef SDL_HINT_AUDIODRIVER
-@@ -3031,6 +3134,9 @@ bool krkrsdl2_init_platform(void)
+@@ -3031,6 +3188,9 @@ bool krkrsdl2_init_platform(void)
  #endif
  
  	TVPLoadMessage();
@@ -688,7 +834,7 @@ index 48c7820..676f1e6 100644
  
  #ifdef _WIN32
  	SDL_SetWindowsMessageHook(sdl_windows_message_hook, nullptr);
-@@ -3039,7 +3145,14 @@ bool krkrsdl2_init_platform(void)
+@@ -3039,7 +3199,14 @@ bool krkrsdl2_init_platform(void)
  	SDL_AddEventWatch(sdl_event_watch, nullptr);
  #endif
  	::Application = new tTVPApplication();
@@ -704,7 +850,7 @@ index 48c7820..676f1e6 100644
  }
  
  void krkrsdl2_run_main_loop(void)
-@@ -3159,13 +3272,32 @@ TShiftState TVP_TShiftState_From_uint32(tjs_uint32 state)
+@@ -3159,13 +3326,32 @@ TShiftState TVP_TShiftState_From_uint32(tjs_uint32 state)
  	return result;
  }
  
@@ -739,7 +885,7 @@ index 48c7820..676f1e6 100644
  	}
  	static tjs_int ArgumentGeneration = 0;
  	if (ArgumentGeneration != TVPGetCommandLineArgumentGeneration())
-@@ -3209,7 +3341,7 @@ const ttstr &TVPGetDefaultFaceNames()
+@@ -3209,7 +3395,7 @@ const ttstr &TVPGetDefaultFaceNames()
  
  // Override allocation functions by removing the std::bad_alloc throw and doing garbage collection.
  #ifdef KRKRSDL2_OVERRIDE_NEW_ALLOCATOR_FUNCTIONS
@@ -748,7 +894,7 @@ index 48c7820..676f1e6 100644
  {
  	bool has_gced = false;
  
-@@ -3237,7 +3369,7 @@ void *operator new(size_t size, const std::nothrow_t&) noexcept
+@@ -3237,7 +3423,7 @@ void *operator new(size_t size, const std::nothrow_t&) noexcept
  	return p;
  }
  
@@ -757,7 +903,7 @@ index 48c7820..676f1e6 100644
  {
  	return ::operator new(size);
  }
-@@ -3280,7 +3412,7 @@ void operator delete[] (void *ptr, size_t) noexcept
+@@ -3280,7 +3466,7 @@ void operator delete[] (void *ptr, size_t) noexcept
  }
  
  #ifdef __cpp_aligned_new
@@ -766,7 +912,7 @@ index 48c7820..676f1e6 100644
  {
  	bool has_gced = false;
  
-@@ -3313,7 +3445,7 @@ void *operator new(size_t size, std::align_val_t alignment, const std::nothrow_t
+@@ -3313,7 +3499,7 @@ void *operator new(size_t size, std::align_val_t alignment, const std::nothrow_t
  	return p;
  }
  
@@ -775,6 +921,19 @@ index 48c7820..676f1e6 100644
  {
  	return ::operator new(size, alignment);
  }
+diff --git a/src/core/sdl2/SDLBitmapCompletion.cpp b/src/core/sdl2/SDLBitmapCompletion.cpp
+index 44f8ac4..fa5011d 100644
+--- a/src/core/sdl2/SDLBitmapCompletion.cpp
++++ b/src/core/sdl2/SDLBitmapCompletion.cpp
+@@ -34,6 +34,8 @@ void TVPSDLBitmapCompletion::NotifyBitmapCompleted(iTVPLayerManager * manager,
+ 		!(x < 0 || y < 0 ||
+ 			x + cliprect.get_width() > w ||
+ 			y + cliprect.get_height() > h) &&
++		!(x + cliprect.get_width() > surface->w ||
++			y + cliprect.get_height() > surface->h) &&
+ 		!(cliprect.left < 0 || cliprect.top < 0 ||
+ 			cliprect.right > bitmapinfo->bmiHeader.biWidth ||
+ 			cliprect.bottom > bitmapinfo->bmiHeader.biHeight))
 diff --git a/src/core/sdl2/SDLEntrypoint.cpp b/src/core/sdl2/SDLEntrypoint.cpp
 index a4453a9..b0e357b 100644
 --- a/src/core/sdl2/SDLEntrypoint.cpp

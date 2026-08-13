@@ -17,6 +17,7 @@ constexpr int kScreenHeight = 544;
 constexpr int kVitaGlMemory = 24 * 1024 * 1024;
 
 bool initialized = false;
+bool first_present = true;
 unsigned int texture = 0;
 int texture_width = 0;
 int texture_height = 0;
@@ -71,6 +72,14 @@ bool krkrvita_vitagl_initialize() {
         return false;
     }
     krkrvita_boot_trace("vitagl-presentation-texture-ready");
+
+    // vitaGL keeps its animated splash active until the first GL scene begins.
+    // Submit a real application frame now so a later script error or a slow
+    // game load cannot leave the splash looking like the application itself.
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    vglSwapBuffers(GL_FALSE);
+    krkrvita_boot_trace("vitagl-bootstrap-frame-presented");
     return true;
 }
 
@@ -90,11 +99,18 @@ bool krkrvita_vitagl_resize(int width, int height) {
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
                  GL_BGRA, GL_UNSIGNED_BYTE, nullptr);
     glBindTexture(GL_TEXTURE_2D, 0);
-    return glGetError() == GL_NO_ERROR;
+    if (glGetError() != GL_NO_ERROR) return false;
+    krkrvita_boot_trace("vitagl-presentation-surface-sized");
+    return true;
 }
 
-void krkrvita_vitagl_present(const void* pixels, int pitch, int width, int height) {
-    if (!pixels || pitch < width * 4 || !krkrvita_vitagl_resize(width, height)) return;
+bool krkrvita_vitagl_present(const void* pixels, int pitch, int width, int height) {
+    if (first_present) krkrvita_boot_trace("vitagl-first-game-frame-entered");
+    if (!pixels || width <= 0 || height <= 0 || pitch < width * 4 ||
+        !krkrvita_vitagl_resize(width, height)) {
+        if (first_present) krkrvita_boot_trace("vitagl-first-game-frame-invalid");
+        return false;
+    }
 
     const auto* source = static_cast<const std::uint8_t*>(pixels);
     const std::size_t row_size = static_cast<std::size_t>(width) * 4u;
@@ -106,6 +122,11 @@ void krkrvita_vitagl_present(const void* pixels, int pitch, int width, int heigh
     glBindTexture(GL_TEXTURE_2D, texture);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height,
                     GL_BGRA, GL_UNSIGNED_BYTE, tightly_packed.data());
+    if (glGetError() != GL_NO_ERROR) {
+        if (first_present) krkrvita_boot_trace("vitagl-first-game-frame-upload-failed");
+        return false;
+    }
+    if (first_present) krkrvita_boot_trace("vitagl-first-game-frame-uploaded");
 
     const float scale = std::min(static_cast<float>(kScreenWidth) / width,
                                  static_cast<float>(kScreenHeight) / height);
@@ -128,4 +149,13 @@ void krkrvita_vitagl_present(const void* pixels, int pitch, int width, int heigh
     glDisable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, 0);
     vglSwapBuffers(GL_FALSE);
+    if (glGetError() != GL_NO_ERROR) {
+        if (first_present) krkrvita_boot_trace("vitagl-first-game-frame-draw-failed");
+        return false;
+    }
+    if (first_present) {
+        krkrvita_boot_trace("vitagl-first-game-frame-presented");
+        first_present = false;
+    }
+    return true;
 }

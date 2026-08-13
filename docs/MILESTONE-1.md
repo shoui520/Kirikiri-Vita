@@ -55,7 +55,7 @@ Install `build-vita-engine/krkrsdl2.vpk`, copy the untouched game directory to
 disabled pending safe hardware validation of their SFO and uninstall path.
 
 Upstream VitaGL requires `ur0:/data/libshacccg.suprx`; install it legally with
-ShaRKBR33D or VitaDB Downloader. Engine build `01.08` checks this before VitaGL
+ShaRKBR33D or VitaDB Downloader. Engine build `01.09` checks this before VitaGL
 startup. It also recreates `ux0:data/krkrvita/boot-status.txt` from a
 pre-constructor hook and uses raw Vita I/O for `error.txt`, so a launch that
 returns to LiveArea can be assigned to the loader, constructors, engine, or

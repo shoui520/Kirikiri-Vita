@@ -7,5 +7,4 @@
 // presents it with VitaGL. SDL must not create a renderer on Vita.
 bool krkrvita_vitagl_initialize();
 bool krkrvita_vitagl_resize(int width, int height);
-void krkrvita_vitagl_present(const void* pixels, int pitch, int width, int height);
-
+bool krkrvita_vitagl_present(const void* pixels, int pitch, int width, int height);
