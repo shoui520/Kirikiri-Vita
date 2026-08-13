@@ -21,7 +21,7 @@ cmake -S "$repo_root/vendor/krkrsdl2" -B "$build_dir" \
   -DKRKRVITA_OVERLAY_DIR="$repo_root" \
   -DVITA_APP_NAME="Kirikiri Vita" \
   -DVITA_TITLEID=KRVITA001 \
-  -DVITA_VERSION=01.04
+  -DVITA_VERSION=01.05
 cmake --build "$build_dir" --parallel "${JOBS:-4}"
 
 cmake -S "$repo_root/vita/booter" -B "$booter_build_dir" \

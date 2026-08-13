@@ -73,8 +73,40 @@ index 9503505..8c02ca7 100644
  )
  endif()
  
+diff --git a/src/core/base/sdl2/StorageImpl.cpp b/src/core/base/sdl2/StorageImpl.cpp
+index 9a7e687..470a2d3 100644
+--- a/src/core/base/sdl2/StorageImpl.cpp
++++ b/src/core/base/sdl2/StorageImpl.cpp
+@@ -15,6 +15,9 @@
+ #include "StorageImpl.h"
+ #include "WindowImpl.h"
+ #include "SysInitIntf.h"
++#ifdef KRKRVITA_RETAIL
++#include "SysInitImpl.h"
++#endif
+ #include "DebugIntf.h"
+ #include "Random.h"
+ #include "XP3Archive.h"
+@@ -689,6 +692,12 @@ bool TVPRemoveFolder(const ttstr &name)
+ //---------------------------------------------------------------------------
+ ttstr TVPGetAppPath()
+ {
++#ifdef KRKRVITA_RETAIL
++	// Retail scripts use System.exePath to find sibling XP3 archives. The
++	// shared engine lives in app0, but its executable semantics belong to the
++	// selected game root, just as if the Windows executable lived there.
++	if(!TVPRetailGameRoot.IsEmpty()) return TVPRetailGameRoot;
++#endif
+ 	static ttstr exepath(TVPExtractStoragePath(TVPNormalizeStorageName(ExePath())));
+ 	return exepath;
+ }
+@@ -1658,4 +1667,3 @@ TJS_END_NATIVE_STATIC_METHOD_DECL_OUTER(/*object to register*/cls,
+ 
+ }
+ //---------------------------------------------------------------------------
+-
 diff --git a/src/core/base/sdl2/SysInitImpl.cpp b/src/core/base/sdl2/SysInitImpl.cpp
-index bea8d95..b4177dc 100644
+index bea8d95..5cc30d3 100644
 --- a/src/core/base/sdl2/SysInitImpl.cpp
 +++ b/src/core/base/sdl2/SysInitImpl.cpp
 @@ -51,6 +51,9 @@
@@ -87,7 +119,69 @@ index bea8d95..b4177dc 100644
  #include <SDL.h>
  #include <errno.h>
  #ifdef __APPLE__
-@@ -1282,7 +1285,9 @@ void TVPBeforeSystemInit()
+@@ -66,6 +69,9 @@
+ tjs_string TVPNativeProjectDir;
+ tjs_string TVPNativeDataPath;
+ bool TVPProjectDirSelected = false;
++#ifdef KRKRVITA_RETAIL
++ttstr TVPRetailGameRoot;
++#endif
+ //---------------------------------------------------------------------------
+ 
+ //---------------------------------------------------------------------------
+@@ -962,6 +968,51 @@ static int CALLBACK TVPBrowseCallbackProc(HWND hwnd,UINT uMsg,LPARAM lParam,LPAR
+ #endif
+ static tjs_uint64 TVPTotalPhysMemory = 0;
+ static void TVPInitProgramArgumentsAndDataPath(bool stop_after_datapath_got);
++#ifdef KRKRVITA_RETAIL
++static bool TVPSelectRetailProjectCandidate(const tjs_string &base,
++	const tjs_char *leaf, const char *trace_stage, ttstr &selected)
++{
++	const ttstr candidate(base + leaf);
++	if(TVPCheckExistentLocalFolder(candidate))
++	{
++		selected = candidate + TJS_W("/");
++		krkrvita_boot_trace(trace_stage);
++		return true;
++	}
++	if(TVPCheckExistentLocalFile(candidate))
++	{
++		selected = candidate;
++		selected += TVPArchiveDelimiter;
++		krkrvita_boot_trace(trace_stage);
++		return true;
++	}
++	return false;
++}
++
++static void TVPSelectRetailProjectAt(const ttstr &root, ttstr &selected)
++{
++	tjs_string base = root.AsStdString();
++	if(base.empty()) return;
++	const tjs_char last = base[base.length() - 1];
++	if(last != TJS_W('/') && last != TJS_W('\\')) base += TJS_W('/');
++	TVPRetailGameRoot = TVPNormalizeStorageName(ttstr(base));
++
++	// Match native Kirikiri/Kirikiroid project discovery when the launcher
++	// supplies a game directory rather than placing the executable inside it.
++	if(TVPSelectRetailProjectCandidate(base, TJS_W("content-data"),
++		"retail-project-content-data-selected", selected)) return;
++	if(TVPSelectRetailProjectCandidate(base, TJS_W("data.xp3"),
++		"retail-project-data-xp3-selected", selected)) return;
++	if(TVPSelectRetailProjectCandidate(base, TJS_W("data.exe"),
++		"retail-project-data-exe-selected", selected)) return;
++	if(TVPSelectRetailProjectCandidate(base, TJS_W("data"),
++		"retail-project-data-directory-selected", selected)) return;
++
++	selected = base;
++	krkrvita_boot_trace("retail-project-root-selected");
++}
++#endif
++
+ void TVPBeforeSystemInit()
+ {
+ 	//RegisterDllLoadHook();
+@@ -1282,7 +1333,9 @@ void TVPBeforeSystemInit()
  		TVPAddImportantLog( TVPFormatMessage(TVPInfoSelectedProjectDirectory, TVPProjectDir) );
  	}
  #endif
@@ -98,7 +192,7 @@ index bea8d95..b4177dc 100644
  	char *base_path = SDL_GetBasePath();
  	std::string base_path_utf8;
  	if (base_path)
-@@ -1358,8 +1363,9 @@ void TVPBeforeSystemInit()
+@@ -1358,8 +1411,9 @@ void TVPBeforeSystemInit()
  			TVPProjectDirSelected = true;
  		}
  	}
@@ -109,7 +203,27 @@ index bea8d95..b4177dc 100644
  	if (!TVPProjectDirSelected)
  	{
  		tjs_string dir_utf16;
-@@ -1460,6 +1466,13 @@ void TVPAfterSystemInit()
+@@ -1423,11 +1477,19 @@ void TVPBeforeSystemInit()
+ 				ttstr dirbuf = _wargv[i];
+ 				if (TVPCheckExistentLocalFolder(dirbuf))
+ 				{
++#ifdef KRKRVITA_RETAIL
++					TVPSelectRetailProjectAt(dirbuf, dirbuf);
++#else
+ 					dirbuf += TJS_W("/");
++#endif
+ 					TVPProjectDirSelected = true;
+ 				}
+ 				else if (TVPCheckExistentLocalFile(dirbuf))
+ 				{
++#ifdef KRKRVITA_RETAIL
++					TVPRetailGameRoot = TVPExtractStoragePath(
++						TVPNormalizeStorageName(dirbuf));
++#endif
+ 					dirbuf += TJS_W(">");
+ 					TVPProjectDirSelected = true;
+ 				}
+@@ -1460,6 +1522,13 @@ void TVPAfterSystemInit()
  	// check CPU type
  	TVPDetectCPU();
  
@@ -123,7 +237,7 @@ index bea8d95..b4177dc 100644
  #if 0
  	// dump display device
  	TVPDumpDisplayDevices();
-@@ -1686,6 +1699,9 @@ void TVPTerminateAsync(int code)
+@@ -1686,6 +1755,9 @@ void TVPTerminateAsync(int code)
  void TVPTerminateSync(int code)
  {
  	// do synchronous temination of application (never return)
@@ -133,7 +247,7 @@ index bea8d95..b4177dc 100644
  	TVPSystemUninit();
  	exit(code);
  }
-@@ -2210,8 +2226,3 @@ bool TVPExecuteUserConfig()
+@@ -2210,8 +2282,3 @@ bool TVPExecuteUserConfig()
  	return true;
  }
  //---------------------------------------------------------------------------
@@ -142,6 +256,20 @@ index bea8d95..b4177dc 100644
 -
 -
 -
+diff --git a/src/core/base/sdl2/SysInitImpl.h b/src/core/base/sdl2/SysInitImpl.h
+index 2dd67c0..9016647 100644
+--- a/src/core/base/sdl2/SysInitImpl.h
++++ b/src/core/base/sdl2/SysInitImpl.h
+@@ -18,6 +18,9 @@ extern void TVPInitializeBaseSystems();
+ 
+ extern tjs_string TVPNativeProjectDir;
+ extern tjs_string TVPNativeDataPath;
++#ifdef KRKRVITA_RETAIL
++extern ttstr TVPRetailGameRoot;
++#endif
+ 
+ extern bool TVPProjectDirSelected;
+ extern void TVPEnsureDataPathDirectory();
 diff --git a/src/core/environ/sdl2/Application.cpp b/src/core/environ/sdl2/Application.cpp
 index daf2ed5..1bb4aa3 100644
 --- a/src/core/environ/sdl2/Application.cpp
