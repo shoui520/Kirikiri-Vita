@@ -4,13 +4,22 @@ Kirikiri Vita is a PlayStation Vita port of the complete current Kirikiri core
 for legally owned retail Kirikiri visual novels. Retail compatibility,
 including Yuri-compatible `xp3filter.tjs`, is the primary design constraint.
 
-The full engine comes from current
-[Kirikiri SDL2](https://github.com/krkrsdl2/krkrsdl2). Retail archive filtering
-is ported from [Kirikiroid2Yuri](https://github.com/YuriSizuku/Kirikiroid2Yuri),
-including its native `xp3filter` plugin ABI. Presentation is VitaGL only; the
-SDL GXM, PIB and PVR renderers are disabled. Text uses the Vita Japanese system
-font through ScePvf, audio uses the complete upstream sound stack over SDL's
-Vita audio backend, and controller/touch events support per-game remapping.
+The engine combines the current Kirikiri core from
+[Kirikiri SDL2](https://github.com/krkrsdl2/krkrsdl2) with the retail native API
+contract from
+[Kirikiroid2Yuri](https://github.com/YuriSizuku/Kirikiroid2Yuri). Yuri's
+internal `Plugins.link()` registry and its portable compatibility modules are
+compiled into the Vita executable, including `xp3filter.dll` and
+`addFont.dll`. Presentation is VitaGL only; the SDL GXM, PIB and PVR renderers
+are disabled. Text uses bundled fonts through FreeType and falls back to the
+Vita Japanese system font through ScePvf. Audio uses the upstream sound stack
+over SDL's Vita audio backend, and controller/touch events support per-game
+remapping.
+
+This is not yet arbitrary-game complete: the SDL base's video overlay is a
+Windows-only implementation, and Yuri's `layerExMovie.dll` requires a port of
+its older FFmpeg player to VitaSDK's current FFmpeg API. The exact native-module
+status is tracked in `docs/YURI-COMPATIBILITY.md`.
 
 ## Current development commands
 

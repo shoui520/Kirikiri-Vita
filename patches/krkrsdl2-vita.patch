@@ -1,8 +1,8 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 9503505..8c02ca7 100644
+index 9503505..72cc761 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -637,6 +637,61 @@ if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.13.0")
+@@ -637,6 +637,81 @@ if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.13.0")
  target_link_options(${KRKRSDL2_NAME} PUBLIC ${KRKRSDL2_LDFLAGS})
  endif()
  target_link_libraries(${KRKRSDL2_NAME} ${KRKRSDL2_LIBS})
@@ -34,9 +34,26 @@ index 9503505..8c02ca7 100644
 +	${KRKRVITA_OVERLAY_DIR}/src/engine/retail/retail_bootstrap.cpp
 +	${KRKRVITA_OVERLAY_DIR}/src/engine/retail/legacy_classes.cpp
 +	${KRKRVITA_OVERLAY_DIR}/src/engine/retail/xp3filter_install.cpp
++	${KRKRVITA_OVERLAY_DIR}/src/engine/retail/yuri_add_font.cpp
 +	${KRKRVITA_OVERLAY_DIR}/src/engine/retail/yuri_kag_parser.cpp
 +	${KRKRVITA_OVERLAY_DIR}/src/engine/retail/yuri_menu_intf.cpp
 +	${KRKRVITA_OVERLAY_DIR}/src/engine/retail/yuri_menu_impl.cpp
++	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/core/sound/CDDAIntf.cpp
++	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/core/sound/MIDIIntf.cpp
++	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/core/sound/win32/CDDAImpl.cpp
++	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/core/sound/win32/MIDIImpl.cpp
++	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/core/utils/PadIntf.cpp
++	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/plugins/InternalPlugins.cpp
++	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/plugins/csvParser.cpp
++	${KRKRVITA_OVERLAY_DIR}/src/engine/retail/yuri_dirlist.cpp
++	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/plugins/fftgraph.cpp
++	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/plugins/getSample.cpp
++	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/plugins/getabout.cpp
++	${KRKRVITA_OVERLAY_DIR}/src/engine/retail/yuri_perspective.cpp
++	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/plugins/saveStruct.cpp
++	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/plugins/varfile.cpp
++	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/plugins/win32dialog.cpp
++	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/plugins/wutcwf.cpp
 +	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/plugins/ncbind/ncbind.cpp
 +	${CMAKE_CURRENT_BINARY_DIR}/krkrvita-generated/xp3filter.cpp
 +)
@@ -46,7 +63,10 @@ index 9503505..8c02ca7 100644
 +	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/plugins
 +	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/plugins/ncbind
 +	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/core/environ
++	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/core/sound
++	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/core/sound/win32
 +	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/core/utils
++	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/core/utils/win32
 +	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/core/visual
 +	${KRKRVITA_OVERLAY_DIR}/vendor/yuri/src/core/visual/win32
 +)
@@ -64,7 +84,7 @@ index 9503505..8c02ca7 100644
  if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.16.0")
  if(KRKRSDL2_ENABLE_PRECOMPILED_HEADERS)
  target_precompile_headers(${KRKRSDL2_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/core/sdl2/SDLPrecompiledHeader.h)
-@@ -718,7 +773,7 @@ vita_create_vpk(${KRKRSDL2_NAME}.vpk ${VITA_TITLEID} ${KRKRSDL2_NAME}.self
+@@ -718,7 +793,7 @@ vita_create_vpk(${KRKRSDL2_NAME}.vpk ${VITA_TITLEID} ${KRKRSDL2_NAME}.self
      FILE ${VITA_RESOURCES_ROOT}/sce_sys/livearea/contents/bg.png sce_sys/livearea/contents/bg.png
      FILE ${VITA_RESOURCES_ROOT}/sce_sys/livearea/contents/icon.png sce_sys/livearea/contents/icon.png
      FILE ${VITA_RESOURCES_ROOT}/sce_sys/livearea/contents/template.xml sce_sys/livearea/contents/template.xml
@@ -73,6 +93,41 @@ index 9503505..8c02ca7 100644
  )
  endif()
  
+diff --git a/src/core/base/sdl2/PluginImpl.cpp b/src/core/base/sdl2/PluginImpl.cpp
+index 6f42f49..fffdf0f 100644
+--- a/src/core/base/sdl2/PluginImpl.cpp
++++ b/src/core/base/sdl2/PluginImpl.cpp
+@@ -490,6 +490,14 @@ tTVPAtExit TVPDestroyPluginVectorAtExit
+ static bool TVPPluginLoading = false;
+ void TVPLoadPlugin(const ttstr & name)
+ {
++#ifdef KRKRVITA_RETAIL
++	// Kirikiroid/Yuri ships its compatibility DLLs as native modules linked
++	// into the executable.  Retail scripts still activate them through the
++	// ordinary Plugins.link("name.dll") API.
++	extern bool TVPLoadInternalPlugin(const ttstr &name);
++	TVPLoadInternalPlugin(name);
++	return;
++#endif
+ #ifdef KRKRSDL2_ENABLE_PLUGINS
+ 	// load plugin
+ 	if(TVPPluginLoading)
+@@ -588,6 +596,10 @@ static void TVPSearchPluginsAt(std::vector<tTVPFoundPlugin> &list, tjs_string fo
+ 
+ void TVPLoadPluigins(void)
+ {
++#ifdef KRKRVITA_RETAIL
++	extern void TVPLoadInternalPlugins();
++	TVPLoadInternalPlugins();
++#endif
+ #if 0
+ 	// This function searches plugins which have an extension of ".tpm"
+ 	// in the default path:
+@@ -1208,4 +1220,3 @@ TJS_END_NATIVE_STATIC_METHOD_DECL_OUTER(cls, getList)
+ 
+ 
+ 
+-
 diff --git a/src/core/base/sdl2/StorageImpl.cpp b/src/core/base/sdl2/StorageImpl.cpp
 index 9a7e687..470a2d3 100644
 --- a/src/core/base/sdl2/StorageImpl.cpp
@@ -271,7 +326,7 @@ index 2dd67c0..9016647 100644
  extern bool TVPProjectDirSelected;
  extern void TVPEnsureDataPathDirectory();
 diff --git a/src/core/environ/sdl2/Application.cpp b/src/core/environ/sdl2/Application.cpp
-index daf2ed5..1bb4aa3 100644
+index daf2ed5..9d23e64 100644
 --- a/src/core/environ/sdl2/Application.cpp
 +++ b/src/core/environ/sdl2/Application.cpp
 @@ -55,6 +55,9 @@
@@ -327,7 +382,7 @@ index daf2ed5..1bb4aa3 100644
  
  #if 0
  		Initialize();
-@@ -480,11 +499,17 @@ bool tTVPApplication::StartApplication( int argc, tjs_char* argv[] ) {
+@@ -480,11 +499,19 @@ bool tTVPApplication::StartApplication( int argc, tjs_char* argv[] ) {
  #endif
  
  		TVPSystemInit();
@@ -341,11 +396,13 @@ index daf2ed5..1bb4aa3 100644
  		TVPSystemControl = new tTVPSystemControl();
 +#ifdef KRKRVITA_RETAIL
 +		krkrvita_boot_trace("engine-system-control-created");
++		TVPLoadPluigins();
++		krkrvita_boot_trace("engine-internal-plugins-ready");
 +#endif
  #if 0
  #ifndef TVP_IGNORE_LOAD_TPM_PLUGIN
  		TVPLoadPluigins(); // load plugin module *.tpm
-@@ -498,7 +523,16 @@ bool tTVPApplication::StartApplication( int argc, tjs_char* argv[] ) {
+@@ -498,7 +525,16 @@ bool tTVPApplication::StartApplication( int argc, tjs_char* argv[] ) {
  		image_load_thread_->StartTread();
  #endif
  
@@ -363,7 +420,7 @@ index daf2ed5..1bb4aa3 100644
  
  #if 0
  		Run();
-@@ -521,6 +555,9 @@ bool tTVPApplication::StartApplication( int argc, tjs_char* argv[] ) {
+@@ -521,6 +557,9 @@ bool tTVPApplication::StartApplication( int argc, tjs_char* argv[] ) {
  		return false;
  	} catch( const EAbort & ) {
  		// nothing to do
@@ -373,7 +430,7 @@ index daf2ed5..1bb4aa3 100644
  	} catch( const Exception &exception ) {
  		TVPOnError();
  		if(!TVPSystemUninitCalled)
-@@ -612,6 +649,10 @@ void tTVPApplication::CheckConsole() {
+@@ -612,6 +651,10 @@ void tTVPApplication::CheckConsole() {
  			is_attach_console_ = GetConsoleMode(hStdOutput, &mode) != 0;
  		}
  	}
@@ -384,7 +441,7 @@ index daf2ed5..1bb4aa3 100644
  #else
  	is_attach_console_ = isatty(fileno(stdout)) != 0;
  #endif
-@@ -749,6 +790,13 @@ void tTVPApplication::BringToFront() {
+@@ -749,6 +792,13 @@ void tTVPApplication::BringToFront() {
  	}
  }
  void tTVPApplication::ShowException( const tjs_char* e ) {

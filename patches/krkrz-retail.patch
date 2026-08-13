@@ -1,21 +1,55 @@
 diff --git a/base/ScriptMgnIntf.cpp b/base/ScriptMgnIntf.cpp
-index 76ffe10f..c9828aef 100644
+index 76ffe10f..59145c01 100644
 --- a/base/ScriptMgnIntf.cpp
 +++ b/base/ScriptMgnIntf.cpp
-@@ -52,7 +52,11 @@
+@@ -51,8 +51,15 @@
+ #include "ApplicationSpecialPath.h"
  #endif
  #include "SystemImpl.h"
- #include "BitmapLayerTreeOwner.h"
+-#include "BitmapLayerTreeOwner.h"
 -#include "Extension.h"
++#include "BitmapLayerTreeOwner.h"
 +#include "Extension.h"
 +
 +#ifdef KRKRVITA_RETAIL
 +#include "krkrvita/retail_bootstrap.hpp"
++#include "CDDAIntf.h"
++#include "MIDIIntf.h"
++#include "PadIntf.h"
 +#endif
  
  #ifdef KRKRZ_ENABLE_CANVAS
  #include "CanvasIntf.h"
-@@ -247,10 +251,14 @@ void TVPInitScriptEngine()
+@@ -204,15 +211,22 @@ void TVPInitScriptEngine()
+ 
+ 	/* classes */
+ 	REGISTER_OBJECT(Debug, TVPCreateNativeClass_Debug());
+-	REGISTER_OBJECT(Font, TVPCreateNativeClass_Font());
+-	REGISTER_OBJECT(Layer, TVPCreateNativeClass_Layer());
+-	REGISTER_OBJECT(Timer, TVPCreateNativeClass_Timer());
++	REGISTER_OBJECT(Font, TVPCreateNativeClass_Font());
++	REGISTER_OBJECT(Layer, TVPCreateNativeClass_Layer());
++#ifdef KRKRVITA_RETAIL
++	REGISTER_OBJECT(CDDASoundBuffer, TVPCreateNativeClass_CDDASoundBuffer());
++	REGISTER_OBJECT(MIDISoundBuffer, TVPCreateNativeClass_MIDISoundBuffer());
++#endif
++	REGISTER_OBJECT(Timer, TVPCreateNativeClass_Timer());
+ 	REGISTER_OBJECT(AsyncTrigger, TVPCreateNativeClass_AsyncTrigger());
+ 	REGISTER_OBJECT(System, TVPCreateNativeClass_System());
+ 	REGISTER_OBJECT(Storages, TVPCreateNativeClass_Storages());
+-	REGISTER_OBJECT(Plugins, TVPCreateNativeClass_Plugins());
+-	REGISTER_OBJECT(VideoOverlay, TVPCreateNativeClass_VideoOverlay());
+-	REGISTER_OBJECT(Clipboard, TVPCreateNativeClass_Clipboard());
++	REGISTER_OBJECT(Plugins, TVPCreateNativeClass_Plugins());
++	REGISTER_OBJECT(VideoOverlay, TVPCreateNativeClass_VideoOverlay());
++#ifdef KRKRVITA_RETAIL
++	REGISTER_OBJECT(Pad, TVPCreateNativeClass_Pad());
++#endif
++	REGISTER_OBJECT(Clipboard, TVPCreateNativeClass_Clipboard());
+ 	REGISTER_OBJECT(Scripts, TVPCreateNativeClass_Scripts()); // declared in this file
+ 	REGISTER_OBJECT(Rect, TVPCreateNativeClass_Rect());
+ 	REGISTER_OBJECT(Bitmap, TVPCreateNativeClass_Bitmap());
+@@ -247,10 +261,14 @@ void TVPInitScriptEngine()
  	dsp = new tTJSNC_BasicDrawDevice();
  	val = tTJSVariant(dsp);
  	dsp->Release();
@@ -34,7 +68,7 @@ index 76ffe10f..c9828aef 100644
  	TVPCauseAtInstallExtensionClass( global );
  
  	// Garbage Collection Hook
-@@ -580,14 +588,18 @@ void TVPDumpScriptEngine()
+@@ -580,14 +598,18 @@ void TVPDumpScriptEngine()
  //---------------------------------------------------------------------------
  // TVPExecuteStartupScript
  //---------------------------------------------------------------------------
@@ -61,7 +95,7 @@ index 76ffe10f..c9828aef 100644
  			TVPExecuteStorage(TVPStartupScriptName);
  			TVPAddLog( (const tjs_char*)TVPInfoStartupScriptEnded );
  		}
-@@ -825,11 +837,17 @@ void TVPShowScriptException(eTJS &e)
+@@ -825,11 +847,17 @@ void TVPShowScriptException(eTJS &e)
  	TVPOnError();
  
  	if(!TVPSystemUninitCalled)
@@ -84,7 +118,7 @@ index 76ffe10f..c9828aef 100644
  	}
  }
  //---------------------------------------------------------------------------
-@@ -842,9 +860,20 @@ void TVPShowScriptException(eTJSScriptError &e)
+@@ -842,9 +870,20 @@ void TVPShowScriptException(eTJSScriptError &e)
  	{
  		ttstr errstr = (ttstr(TVPScriptExceptionRaised) + TJS_W("\n") + e.GetMessage());
  		TVPAddLog(ttstr(TVPScriptExceptionRaised) + TJS_W("\n") + e.GetMessage());
@@ -108,6 +142,48 @@ index 76ffe10f..c9828aef 100644
  
  #ifdef TVP_ENABLE_EXECUTE_AT_EXCEPTION
  		const tjs_char* scriptName = e.GetBlockNoAddRef()->GetName();
+diff --git a/base/StorageIntf.cpp b/base/StorageIntf.cpp
+index f26981f8..28ae4c42 100644
+--- a/base/StorageIntf.cpp
++++ b/base/StorageIntf.cpp
+@@ -529,15 +529,28 @@ tTJSBinaryStream * tTVPStorageMediaManager::Open(const ttstr & name, tjs_uint32
+ 	return rec->MediaIntf.GetObjectNoAddRef()->Open(rec->GetDomainAndPath(name), flags);
+ }
+ //---------------------------------------------------------------------------
+-void tTVPStorageMediaManager::GetListAt(const ttstr &name, iTVPStorageLister * lister)
+-{
+-	// gateway for GetListAt
+-	// name must not be an in-archive storage name
+-	tMediaRecord *rec = GetMediaRecord(name);
+-	/*return */rec->MediaIntf.GetObjectNoAddRef()->GetListAt(rec->GetDomainAndPath(name), lister);
+-}
+-//---------------------------------------------------------------------------
+-ttstr tTVPStorageMediaManager::GetLocallyAccessibleName(const ttstr &name)
++void tTVPStorageMediaManager::GetListAt(const ttstr &name, iTVPStorageLister * lister)
++{
++	// gateway for GetListAt
++	// name must not be an in-archive storage name
++	tMediaRecord *rec = GetMediaRecord(name);
++	/*return */rec->MediaIntf.GetObjectNoAddRef()->GetListAt(rec->GetDomainAndPath(name), lister);
++}
++//---------------------------------------------------------------------------
++void TVPGetStorageListAt(const ttstr &name, std::vector<ttstr> &list)
++{
++	class tVectorStorageLister final : public iTVPStorageLister
++	{
++		std::vector<ttstr> &List;
++	public:
++		explicit tVectorStorageLister(std::vector<ttstr> &list) : List(list) {}
++		void TJS_INTF_METHOD Add(const ttstr &file) override { List.push_back(file); }
++	} lister(list);
++
++	TVPStorageMediaManager.GetListAt(TVPNormalizeStorageName(name), &lister);
++}
++//---------------------------------------------------------------------------
++ttstr tTVPStorageMediaManager::GetLocallyAccessibleName(const ttstr &name)
+ {
+ 	// gateway for GetLocallyAccessibleName
+ 	// name must not be an in-archive storage name
 diff --git a/base/SysInitIntf.cpp b/base/SysInitIntf.cpp
 index cd5da649..6ef1ca6a 100644
 --- a/base/SysInitIntf.cpp
