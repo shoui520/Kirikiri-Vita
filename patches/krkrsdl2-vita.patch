@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 9503505..d41c7f2 100644
+index 9503505..14f0322 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -637,6 +637,61 @@ if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.13.0")
@@ -64,28 +64,42 @@ index 9503505..d41c7f2 100644
  if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.16.0")
  if(KRKRSDL2_ENABLE_PRECOMPILED_HEADERS)
  target_precompile_headers(${KRKRSDL2_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/core/sdl2/SDLPrecompiledHeader.h)
-@@ -719,6 +774,7 @@ vita_create_vpk(${KRKRSDL2_NAME}.vpk ${VITA_TITLEID} ${KRKRSDL2_NAME}.self
+@@ -718,7 +773,7 @@ vita_create_vpk(${KRKRSDL2_NAME}.vpk ${VITA_TITLEID} ${KRKRSDL2_NAME}.self
+     FILE ${VITA_RESOURCES_ROOT}/sce_sys/livearea/contents/bg.png sce_sys/livearea/contents/bg.png
      FILE ${VITA_RESOURCES_ROOT}/sce_sys/livearea/contents/icon.png sce_sys/livearea/contents/icon.png
      FILE ${VITA_RESOURCES_ROOT}/sce_sys/livearea/contents/template.xml sce_sys/livearea/contents/template.xml
-     FILE ${EMBED_DATA_PATH} ${EMBED_DATA_PATH_BASENAME}
-+	FILE ${KRKRVITA_OVERLAY_DIR}/resources/vita/default-xp3filter.tjs data/xp3filter.tjs
+-    FILE ${EMBED_DATA_PATH} ${EMBED_DATA_PATH_BASENAME}
++	FILE ${KRKRVITA_OVERLAY_DIR}/resources/vita/default-xp3filter.tjs krkrvita/default-xp3filter.tjs
  )
  endif()
  
 diff --git a/src/core/base/sdl2/SysInitImpl.cpp b/src/core/base/sdl2/SysInitImpl.cpp
-index bea8d95..d127cdf 100644
+index bea8d95..1d29820 100644
 --- a/src/core/base/sdl2/SysInitImpl.cpp
 +++ b/src/core/base/sdl2/SysInitImpl.cpp
-@@ -1359,7 +1359,7 @@ void TVPBeforeSystemInit()
+@@ -1282,7 +1282,9 @@ void TVPBeforeSystemInit()
+ 		TVPAddImportantLog( TVPFormatMessage(TVPInfoSelectedProjectDirectory, TVPProjectDir) );
+ 	}
+ #endif
+-	// First, try SDL_GetBasePath
++	// First, try SDL_GetBasePath. Retail Vita launches always carry an explicit
++	// game path; app0 is engine data and must never win project selection.
++#ifndef KRKRVITA_RETAIL
+ 	char *base_path = SDL_GetBasePath();
+ 	std::string base_path_utf8;
+ 	if (base_path)
+@@ -1358,8 +1360,9 @@ void TVPBeforeSystemInit()
+ 			TVPProjectDirSelected = true;
  		}
  	}
++#endif
  
 -#if !defined(__vita__)
 +#if !defined(__vita__) || defined(KRKRVITA_RETAIL)
  	if (!TVPProjectDirSelected)
  	{
  		tjs_string dir_utf16;
-@@ -1460,6 +1460,13 @@ void TVPAfterSystemInit()
+@@ -1460,6 +1463,13 @@ void TVPAfterSystemInit()
  	// check CPU type
  	TVPDetectCPU();
  
@@ -99,13 +113,42 @@ index bea8d95..d127cdf 100644
  #if 0
  	// dump display device
  	TVPDumpDisplayDevices();
-@@ -2212,6 +2219,3 @@ bool TVPExecuteUserConfig()
+@@ -2211,7 +2221,3 @@ bool TVPExecuteUserConfig()
+ }
  //---------------------------------------------------------------------------
  
- 
 -
 -
 -
+-
+diff --git a/src/core/environ/sdl2/Application.cpp b/src/core/environ/sdl2/Application.cpp
+index daf2ed5..2c4a886 100644
+--- a/src/core/environ/sdl2/Application.cpp
++++ b/src/core/environ/sdl2/Application.cpp
+@@ -55,6 +55,9 @@
+ #include "VirtualKey.h"
+ #endif
+ #include "TVPWindow.h"
++#ifdef KRKRVITA_RETAIL
++#include "krkrvita/retail_bootstrap.hpp"
++#endif
+ #ifndef _WIN32
+ #include <unistd.h>
+ #endif
+@@ -749,6 +752,13 @@ void tTVPApplication::BringToFront() {
+ 	}
+ }
+ void tTVPApplication::ShowException( const tjs_char* e ) {
++#ifdef KRKRVITA_RETAIL
++	std::string vita_error;
++	if (e && TVPUtf16ToUtf8(vita_error, tjs_string(e)))
++		krkrvita_report_launch_error(vita_error.c_str());
++	else
++		krkrvita_report_launch_error("Engine startup failed with an unconvertible error message.");
++#endif
+ #if 0
+ 	::MessageBox( NULL, e, TVPFatalError, MB_OK );
+ #endif
 diff --git a/src/core/sdl2/SDLApplication.cpp b/src/core/sdl2/SDLApplication.cpp
 index 48c7820..a0c6563 100644
 --- a/src/core/sdl2/SDLApplication.cpp

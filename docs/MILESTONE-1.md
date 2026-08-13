@@ -29,17 +29,15 @@ Completed off-device for the milestone game:
   the Yuri extraction-filter ABI, VitaGL presentation, SDL Vita audio,
   controller/touch profiles and ScePvf font rasterization;
 - generation of `active.ini` and `profiles/44bb539bf9510882.ini`; and
-- generation of a 58 KiB direct bubble VPK with title ID `K44BB539B` and a
-  128x128 indexed PNG decoded from the game's Windows executable.
+- extraction and Vita PNG conversion of the Windows executable icon. Direct
+  VPK generation is disabled after its metadata failed hardware validation.
 
 Still requiring a real Vita run before this milestone can be called complete:
 
 - boot through the real title screen and scenario;
 - verify PVF Japanese glyph metrics and line layout on firmware;
 - verify BGM, effects, voices, saves and load paths;
-- tune controller/touch behavior if the title assumes Windows-specific input;
-  and
-- install and launch the generated direct bubble into the central app.
+- tune controller/touch behavior if the title assumes Windows-specific input.
 
 ## Reproducible hardware-test payload
 
@@ -49,12 +47,9 @@ VITASDK=/home/shoui/vitasdk JOBS=4 ./scripts/build-vita.sh
   '/home/shoui/Agents/CodexMax/色情教団' \
   .cache/patches .cache/vita-stage \
   'ux0:data/krkrvita/games/色情教団'
-./scripts/package-bubble.sh \
-  '/home/shoui/Agents/CodexMax/色情教団' \
-  .cache/色情教団-direct.vpk
 ```
 
 Install `build-vita-engine/krkrsdl2.vpk`, copy the untouched game directory to
 `ux0:data/krkrvita/games/色情教団`, and copy the contents of
-`.cache/vita-stage` into `ux0:data/krkrvita`. Install the direct bubble only
-after the central application and profile are present.
+`.cache/vita-stage` into `ux0:data/krkrvita`. Direct bubbles are currently
+disabled pending safe hardware validation of their SFO and uninstall path.

@@ -120,7 +120,10 @@ std::string discover_single_game()
 
 void report_launch_error(const std::string &message)
 {
-	if(FILE *file = std::fopen("ux0:data/krkrvita/error.txt", "wb"))
+	sceIoMkdir("ux0:data/krkrvita", 0777);
+	FILE *file = std::fopen("ux0:data/krkrvita/error.txt", "wb");
+	if(!file) file = std::fopen("ux0:data/krkrvita-error.txt", "wb");
+	if(file)
 	{
 		std::fprintf(file, "%s\n", message.c_str());
 		std::fclose(file);
@@ -165,8 +168,8 @@ void krkrvita_resolve_launch(int &argc, char **&argv)
 		launch_arguments.push_back(argc > 0 && argv[0] ? argv[0] : "app0:eboot.bin");
 		if(file_exists(join_path(fallback_game, "xp3filter.tjs")))
 			launch_arguments.push_back("-xp3filter=" + join_path(fallback_game, "xp3filter.tjs"));
-		else if(file_exists("app0:data/xp3filter.tjs"))
-			launch_arguments.push_back("-xp3filter=app0:data/xp3filter.tjs");
+		else if(file_exists("app0:krkrvita/default-xp3filter.tjs"))
+			launch_arguments.push_back("-xp3filter=app0:krkrvita/default-xp3filter.tjs");
 		else
 			report_launch_error("Selected game has no xp3filter.tjs.");
 		if(file_exists(join_path(fallback_game, "patch.tjs")))

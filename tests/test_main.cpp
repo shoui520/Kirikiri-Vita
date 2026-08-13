@@ -1,3 +1,4 @@
+#include "krkrvita/bubble.hpp"
 #include "krkrvita/filter_heuristic.hpp"
 #include "krkrvita/game.hpp"
 #include "krkrvita/patch_manifest.hpp"
@@ -38,6 +39,15 @@ void test_sha256() {
 void test_normalize() {
     check(normalize_game_name(" ＡＢＣ／色情・教団！ ") == "abc色情教団",
           "game title normalization failed");
+}
+
+void test_vita_title_id() {
+    GameDescriptor game;
+    game.fingerprint = "44bb539bf9510882";
+    check(bubble_title_id(game) == "KRVG27323", "legal Vita title ID derivation failed");
+    check(is_vita_title_id("KRVG27323"), "legal Vita title ID rejected");
+    check(!is_vita_title_id("K44BB539"), "hex Vita title ID accepted");
+    check(!is_vita_title_id("A-K44BB53"), "punctuated Vita title ID accepted");
 }
 
 void test_manifest_and_resolver() {
@@ -140,11 +150,11 @@ void test_yuri_filter_vm() {
 }
 
 void test_sfo() {
-    const auto bytes = ParamSfo::bubble("Test Game", "K12345678").encode();
+    const auto bytes = ParamSfo::bubble("Test Game", "KRVG12345").encode();
     check(bytes.size() > 128, "SFO unexpectedly small");
     check(bytes[0] == 0 && bytes[1] == 'P' && bytes[2] == 'S' && bytes[3] == 'F',
           "SFO magic failed");
-    check(std::search(bytes.begin(), bytes.end(), "K12345678", "K12345678" + 9) != bytes.end(),
+    check(std::search(bytes.begin(), bytes.end(), "KRVG12345", "KRVG12345" + 9) != bytes.end(),
           "SFO title ID missing");
 }
 
@@ -197,6 +207,7 @@ int main() {
     try {
         test_sha256();
         test_normalize();
+        test_vita_title_id();
         test_manifest_and_resolver();
         test_patch_cache_integrity();
         test_filter_detection();

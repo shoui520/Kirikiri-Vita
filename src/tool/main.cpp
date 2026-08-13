@@ -84,10 +84,7 @@ std::vector<std::uint8_t> read_file(const std::filesystem::path& path) {
 }
 
 std::string title_id_for(const GameDescriptor& game) {
-    std::string id = "K" + game.fingerprint.substr(0, 8);
-    std::transform(id.begin(), id.end(), id.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-    return id;
+    return bubble_title_id(game);
 }
 
 int command_scan(const std::filesystem::path& game_path) {
@@ -243,7 +240,8 @@ int command_bubble_assets(const std::filesystem::path& game_path,
                           std::string title_id) {
     const auto game = GameScanner::scan(game_path);
     if (title_id.empty()) title_id = title_id_for(game);
-    if (title_id.size() != 9) throw std::runtime_error("Vita title ID must contain 9 characters");
+    if (!is_vita_title_id(title_id))
+        throw std::runtime_error("Vita title ID must match ABCD12345");
     PeResources pe(game.executable);
     const auto icon = pe.largest_icon();
     if (!icon) throw std::runtime_error("game executable has no extractable icon");

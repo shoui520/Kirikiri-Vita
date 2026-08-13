@@ -7,14 +7,25 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <iomanip>
+#include <sstream>
 
 namespace krkrvita {
 
 std::string bubble_title_id(const GameDescriptor& game) {
-    std::string id = "K" + game.fingerprint.substr(0, 8);
-    std::transform(id.begin(), id.end(), id.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-    return id;
+    const auto seed = static_cast<unsigned long>(
+        std::stoul(game.fingerprint.substr(0, 8), nullptr, 16));
+    std::ostringstream id;
+    id << "KRVG" << std::setfill('0') << std::setw(5) << (seed % 100000UL);
+    return id.str();
+}
+
+bool is_vita_title_id(const std::string& title_id) {
+    if (title_id.size() != 9) return false;
+    return std::all_of(title_id.begin(), title_id.begin() + 4,
+                       [](unsigned char value) { return value >= 'A' && value <= 'Z'; }) &&
+           std::all_of(title_id.begin() + 4, title_id.end(),
+                       [](unsigned char value) { return value >= '0' && value <= '9'; });
 }
 
 bool stage_bubble(const BubbleSpec& spec,
@@ -22,7 +33,7 @@ bool stage_bubble(const BubbleSpec& spec,
                   const std::filesystem::path& staging_root,
                   std::string* error) {
     try {
-        if (spec.title_id.size() != 9 || spec.game_id.empty()) {
+        if (!is_vita_title_id(spec.title_id) || spec.game_id.empty()) {
             throw std::runtime_error("invalid bubble title or game ID");
         }
         std::filesystem::create_directories(staging_root / "sce_sys/livearea/contents");

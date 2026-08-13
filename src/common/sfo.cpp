@@ -104,8 +104,8 @@ ParamSfo ParamSfo::bubble(std::string title, std::string title_id,
     sfo.set("APP_VER", version);
     sfo.set("ATTRIBUTE", std::uint32_t{0});
     sfo.set("BOOT_FILE", "eboot.bin");
-    sfo.set("CATEGORY", "gd");
-    sfo.set("CONTENT_ID", "KRKRVITA-" + title_id + "_00-0000000000000000");
+    sfo.set("ATTRIBUTE2", std::uint32_t{12});
+    sfo.set("CATEGORY", "gdb");
     sfo.set("EBOOT_APP_MEMSIZE", std::uint32_t{0x10000000});
     sfo.set("FORMAT", "obs");
     sfo.set("PARENTAL_LEVEL", std::uint32_t{1});
@@ -118,4 +118,3 @@ ParamSfo ParamSfo::bubble(std::string title, std::string title_id,
 }
 
 } // namespace krkrvita
-

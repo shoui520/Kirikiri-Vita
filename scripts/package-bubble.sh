@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+echo "Direct-bubble packaging is disabled: the generated SFO has not passed hardware validation." >&2
+echo "Use the central KRVITA001 application only." >&2
+exit 1
+
 if [[ $# -lt 2 || $# -gt 3 ]]; then
   echo "Usage: $0 GAME_DIR OUTPUT_VPK [TITLE_ID]" >&2
   exit 2

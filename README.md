@@ -29,9 +29,8 @@ VITASDK=/home/shoui/vitasdk ./scripts/build-vita.sh
 ```
 
 The script applies the idempotent patches in `patches/` to pinned recursive
-submodules and produces `build-vita-engine/krkrsdl2.vpk` plus the shared-engine
-direct-bubble template in `build-vita-booter/template`. Do not configure the old
-root Vita target; the wholesale engine target is the product runtime.
+submodules and produces `build-vita-engine/krkrsdl2.vpk`. Do not configure the
+old root Vita target; the wholesale engine target is the product runtime.
 
 To prepare a retail directory without modifying it:
 
@@ -47,15 +46,9 @@ manifest, resolves the game, downloads its complete supported bundle, verifies
 `xp3filter.tjs` against the game's XP3 data, and writes both the active and
 stable per-game profiles.
 
-After `scripts/build-vita.sh`, a direct bubble can be packaged with:
-
-```sh
-./scripts/package-bubble.sh /path/to/game game-direct.vpk
-```
-
-Its icon is extracted from the Windows executable and encoded as an indexed
-128x128 Vita PNG. The small bubble passes the stable game ID to `KRVITA001`; it
-does not duplicate the engine or game data.
+Direct-bubble packaging is disabled until its SFO and installation lifecycle
+have passed hardware validation. Do not install previously generated direct
+bubbles; use the central `KRVITA001` application.
 
 See `docs/ARCHITECTURE.md` and `docs/MILESTONE-1.md` for supported and pending
 functionality. The patch library is fetched at runtime and is not redistributed
