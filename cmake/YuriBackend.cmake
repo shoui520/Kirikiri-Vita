@@ -1603,7 +1603,7 @@ tTJSNI_KAGParser::tTJSNI_KAGParser()
     file(READ "${yuri_thread_impl}" yuri_thread_impl_text)
     string(REPLACE
         "#include <thread>"
-        "#include <thread>\n#include <sched.h>\n#include \"krkrvita/render_task_pool.hpp\"\n#include \"krkrvita/retail_bootstrap.hpp\"\n#include \"krkrvita/vita_pthread_priority.hpp\"\n#include \"krkrvita/vita_thread_policy.hpp\""
+        "#include <thread>\n#include <sched.h>\n#include \"krkrvita/render_task_pool.hpp\"\n#include \"krkrvita/retail_bootstrap.hpp\"\n#include \"krkrvita/yuri_composite_probe.hpp\"\n#include \"krkrvita/vita_pthread_priority.hpp\"\n#include \"krkrvita/vita_thread_policy.hpp\""
         yuri_thread_impl_text "${yuri_thread_impl_text}")
     set(yuri_thread_priority_old [=[
 tTVPThreadPriority tTVPThread::GetPriority()
@@ -1877,6 +1877,7 @@ void TVPExecThreadTask(int numThreads, TVP_THREAD_TASK_FUNC func)
 	static bool reported = false;
 	if(!reported) {
 		krkrvita_boot_trace("yuri-render-task-pool-ready");
+		krkrvita::yuri_probe_build_stamp();
 		reported = true;
 	}
 	pool.run(numThreads, func);
@@ -2032,10 +2033,160 @@ void TVPExecThreadTask(int numThreads, TVP_THREAD_TASK_FUNC func)
     endforeach()
     configure_file("${yuri_core}/visual/RenderManager_software.h"
         "${yuri_generated_dir}/RenderManager_software.h" COPYONLY)
+    # Yuri widened Kirikiri's opaque-area optimisation in
+    # QueryUpdateExcludeRect from `DisplayType == ltOpaque` to also trust
+    # `MainImage->IsOpaque()`. That flag is a raw bool on tTVPBitmap: it is set
+    # true only when a decoded image had no alpha channel, and the CPU drawing
+    # paths in LayerBitmapIntf.cpp (Fill, ColorRect, Blt) never clear it. A
+    # stale true makes the compositor treat an alpha layer as fully covering
+    # and skip drawing everything beneath it.
+    #
+    # Sharin no Kuni's title is a full-screen ltAddAlpha message layer created
+    # with `@position frame="" opacity=0`, and its message box is the same kind
+    # of layer at opacity 128. Mistaking either for opaque erases the art
+    # underneath and leaves only that layer's own text and link highlights,
+    # which is exactly the reported black title screen and black message box.
+    #
+    # Trust the bitmap flag only for layer types that do not composite through
+    # an alpha channel. Being wrong in this direction costs a little redundant
+    # drawing; being wrong the other way erases the frame.
+    set(yuri_layer_intf_overlay "${yuri_generated_dir}/LayerIntf.cpp")
+    file(READ "${yuri_layer_intf_overlay}" yuri_layer_intf_text)
+    set(yuri_layer_intf_exclude
+        "if (parentvisible && (DisplayType == ltOpaque || (MainImage && MainImage->IsOpaque())) && Opacity == 255)")
+    set(yuri_layer_intf_exclude_vita
+        "if (parentvisible && (DisplayType == ltOpaque || (MainImage && MainImage->IsOpaque() && !TVPIsTypeUsingAlphaChannel(DisplayType))) && Opacity == 255)")
+    string(REPLACE "${yuri_layer_intf_exclude}" "${yuri_layer_intf_exclude_vita}"
+        yuri_layer_intf_guarded "${yuri_layer_intf_text}")
+    if(yuri_layer_intf_guarded STREQUAL yuri_layer_intf_text)
+        message(FATAL_ERROR
+            "Yuri opaque-exclude alpha-channel guard patch no longer applies")
+    endif()
+
+    # Compositing probes. The guard above was this defect's second wrong
+    # candidate fix: it is correct in itself, but hardware showed the black
+    # layers survive it, so the exclusion path is not the mechanism. Rather
+    # than ship a third guess, instrument the three decisions that the
+    # remaining hypotheses disagree about and let the device settle it.
+    #
+    # See include/krkrvita/yuri_composite_probe.hpp. Every site is hard-capped
+    # because krkrvita_boot_trace synchronously reopens boot-status.txt.
+    string(REPLACE "#include \"tvpgl.h\""
+        "#include \"tvpgl.h\"\n#include \"krkrvita/yuri_composite_probe.hpp\""
+        yuri_layer_intf_probed_1 "${yuri_layer_intf_guarded}")
+    if(yuri_layer_intf_probed_1 STREQUAL yuri_layer_intf_guarded)
+        message(FATAL_ERROR "Yuri LayerIntf probe include patch no longer applies")
+    endif()
+
+    # Which blend method a layer composite actually resolves to, and with what
+    # opacity and hold-destination-alpha flag.
+    set(yuri_layer_intf_blt
+        "\tdest->Blt(destx, desty, src, srcrect, met, opacity, hda);")
+    set(yuri_layer_intf_blt_probed
+        "\tconst bool krkrvita_probe_on =\n\t\tkrkrvita::yuri_probe_composite_wanted(drawtype, destlayertype);\n\tconst tjs_int krkrvita_probe_x = srcrect.get_width() / 2;\n\tconst tjs_int krkrvita_probe_y = srcrect.get_height() / 2;\n\tconst unsigned int krkrvita_probe_src = krkrvita_probe_on\n\t\t? krkrvita::yuri_probe_sample(src, srcrect.left + krkrvita_probe_x,\n\t\t\tsrcrect.top + krkrvita_probe_y) : 0u;\n\tconst unsigned int krkrvita_probe_before = krkrvita_probe_on\n\t\t? krkrvita::yuri_probe_sample(dest, destx + krkrvita_probe_x,\n\t\t\tdesty + krkrvita_probe_y) : 0u;\n\tdest->Blt(destx, desty, src, srcrect, met, opacity, hda);\n\tif(krkrvita_probe_on)\n\t\tkrkrvita::yuri_probe_composite(drawtype, destlayertype, met, opacity,\n\t\t\thda ? 1 : 0, srcrect.get_width(), srcrect.get_height(),\n\t\t\tkrkrvita_probe_src, krkrvita_probe_before,\n\t\t\tkrkrvita::yuri_probe_sample(dest, destx + krkrvita_probe_x,\n\t\t\t\tdesty + krkrvita_probe_y), src);")
+    string(REPLACE "${yuri_layer_intf_blt}" "${yuri_layer_intf_blt_probed}"
+        yuri_layer_intf_probed_2 "${yuri_layer_intf_probed_1}")
+    if(yuri_layer_intf_probed_2 STREQUAL yuri_layer_intf_probed_1)
+        message(FATAL_ERROR "Yuri LayerIntf composite probe patch no longer applies")
+    endif()
+
+    # Which layer claims an opaque exclusion rectangle, suppressing everything
+    # drawn beneath it.
+    set(yuri_layer_intf_exclude_body
+        "${yuri_layer_intf_exclude_vita}\n\t{\n\t\tif(rect.is_empty())")
+    set(yuri_layer_intf_exclude_body_probed
+        "${yuri_layer_intf_exclude_vita}\n\t{\n\t\tkrkrvita::yuri_probe_exclude(DisplayType, Opacity,\n\t\t\t(MainImage && MainImage->IsOpaque()) ? 1 : 0,\n\t\t\tRect.left, Rect.top, Rect.right, Rect.bottom);\n\t\tif(rect.is_empty())")
+    string(REPLACE "${yuri_layer_intf_exclude_body}"
+        "${yuri_layer_intf_exclude_body_probed}"
+        yuri_layer_intf_probed_3 "${yuri_layer_intf_probed_2}")
+    if(yuri_layer_intf_probed_3 STREQUAL yuri_layer_intf_probed_2)
+        message(FATAL_ERROR "Yuri LayerIntf exclude probe patch no longer applies")
+    endif()
+
+    # Which draw face a layer fill resolved to, and the colour it wrote. This
+    # distinguishes "the message layer image holds transparent black" from
+    # "the alpha byte was dropped and it holds opaque black".
+    set(yuri_layer_intf_fill
+        "\t\tImageModified = MainImage->Fill(destrect, color) || ImageModified;")
+    set(yuri_layer_intf_fill_probed
+        "\t\tImageModified = MainImage->Fill(destrect, color) || ImageModified;\n\t\tkrkrvita::yuri_probe_fill(DrawFace, DisplayType, color,\n\t\t\tdestrect.get_width(), destrect.get_height(),\n\t\t\tkrkrvita::yuri_probe_sample(MainImage,\n\t\t\t\tdestrect.left + destrect.get_width() / 2,\n\t\t\t\tdestrect.top + destrect.get_height() / 2), MainImage);")
+    string(REPLACE "${yuri_layer_intf_fill}" "${yuri_layer_intf_fill_probed}"
+        yuri_layer_intf_probed_4 "${yuri_layer_intf_probed_3}")
+    if(yuri_layer_intf_probed_4 STREQUAL yuri_layer_intf_probed_3)
+        message(FATAL_ERROR "Yuri LayerIntf fill probe patch no longer applies")
+    endif()
+
+    # CopySelf is the only remaining way the composite source can be opaque
+    # when MainImage is not. A layer with visible children composites from a
+    # shared temp bitmap, and CopySelf either copies MainImage into it or --
+    # when UpdateExcludeRect covers the region -- skips, leaving the previous
+    # user's pixels behind.
+    # The skip leaves the shared, never-cleared temp bitmap holding whatever
+    # its previous user wrote. For an opaque layer that is harmless: the
+    # exclusion exists precisely because something opaque covers the region.
+    # For a layer that composites through an alpha channel the stale pixels
+    # *are* the output, and an opaque leftover renders as a solid rectangle
+    # over the art beneath -- the reported symptom.
+    #
+    # Log the decision, then copy anyway for alpha-bearing types. Being wrong
+    # in this direction costs one rectangle copy that the exclusion had hoped
+    # to avoid; being wrong the other way paints the frame black.
+    # Bisects the window between "fill wrote 00000000" and "composite read
+    # ff000000" on the same bitmap. Sampling on entry to Draw separates a
+    # surface already opaque before the compositor ran (script-side mutation)
+    # from one opacified during the draw pass.
+    set(yuri_layer_intf_draw_entry
+        "\tif(visiblecheck && !IsSeen()) return;")
+    set(yuri_layer_intf_draw_entry_probed
+        "\tif(visiblecheck && !IsSeen()) return;\n\tkrkrvita::yuri_probe_draw_entry(DisplayType,\n\t\tkrkrvita::yuri_probe_sample_centre(MainImage),\n\t\tRect.get_width(), Rect.get_height(), MainImage);")
+    string(REPLACE "${yuri_layer_intf_draw_entry}"
+        "${yuri_layer_intf_draw_entry_probed}"
+        yuri_layer_intf_probed_4c "${yuri_layer_intf_probed_4}")
+    if(yuri_layer_intf_probed_4c STREQUAL yuri_layer_intf_probed_4)
+        message(FATAL_ERROR "Yuri Draw entry probe patch no longer applies")
+    endif()
+    set(yuri_layer_intf_probed_4 "${yuri_layer_intf_probed_4c}")
+
+    set(yuri_layer_intf_copyself_entry
+        "\tconst tTVPRect &uer = UpdateExcludeRect;")
+    set(yuri_layer_intf_copyself_entry_probed
+        "\tkrkrvita::yuri_probe_copyself_entry(DisplayType, r.get_width(), r.get_height());\n\tconst tTVPRect &uer = UpdateExcludeRect;")
+    string(REPLACE "${yuri_layer_intf_copyself_entry}"
+        "${yuri_layer_intf_copyself_entry_probed}"
+        yuri_layer_intf_probed_4b "${yuri_layer_intf_probed_4}")
+    if(yuri_layer_intf_probed_4b STREQUAL yuri_layer_intf_probed_4)
+        message(FATAL_ERROR "Yuri CopySelf entry probe patch no longer applies")
+    endif()
+    set(yuri_layer_intf_probed_4 "${yuri_layer_intf_probed_4b}")
+
+    set(yuri_layer_intf_copyself_skip "\t\t\t\t;// nothing to do")
+    set(yuri_layer_intf_copyself_skip_probed
+        "\t\t\t\tkrkrvita::yuri_probe_copyself_skip(DisplayType,\n\t\t\t\t\tuer.left, uer.top, uer.right, uer.bottom,\n\t\t\t\t\tr.left, r.top, r.right, r.bottom);\n\t\t\t\tif(TVPIsTypeUsingAlphaChannel(DisplayType))\n\t\t\t\t\tCopySelfForRect(dest, destx, desty, r);\n\t\t\t\t;// nothing to do")
+    string(REPLACE "${yuri_layer_intf_copyself_skip}"
+        "${yuri_layer_intf_copyself_skip_probed}"
+        yuri_layer_intf_probed_5 "${yuri_layer_intf_probed_4}")
+    if(yuri_layer_intf_probed_5 STREQUAL yuri_layer_intf_probed_4)
+        message(FATAL_ERROR "Yuri CopySelf skip probe patch no longer applies")
+    endif()
+
+    set(yuri_layer_intf_copyself
+        "\t\t\tdest->CopyRect(destx, desty, MainImage, cr);")
+    set(yuri_layer_intf_copyself_probed
+        "\t\t\tdest->CopyRect(destx, desty, MainImage, cr);\n\t\t\tkrkrvita::yuri_probe_copyself(DisplayType,\n\t\t\t\tkrkrvita::yuri_probe_sample(dest,\n\t\t\t\t\tdestx + cr.get_width() / 2,\n\t\t\t\t\tdesty + cr.get_height() / 2),\n\t\t\t\tcr.get_width(), cr.get_height());")
+    string(REPLACE "${yuri_layer_intf_copyself}"
+        "${yuri_layer_intf_copyself_probed}"
+        yuri_layer_intf_probed_6 "${yuri_layer_intf_probed_5}")
+    if(yuri_layer_intf_probed_6 STREQUAL yuri_layer_intf_probed_5)
+        message(FATAL_ERROR "Yuri CopySelf copy probe patch no longer applies")
+    endif()
+
+    file(WRITE "${yuri_layer_intf_overlay}" "${yuri_layer_intf_probed_6}")
+
     list(REMOVE_ITEM yuri_visual_sources
         ${yuri_render_manager_overlay_sources})
     list(APPEND yuri_visual_sources
         ${yuri_render_manager_overlay_outputs})
+
 
     # Measure queued invalidation and layer-completion time on hardware. The
     # presenter snapshot is taken later, after BeforeCompletion finalizes that
@@ -3550,11 +3701,47 @@ void iTVPTexture2D::RecycleProcess()
 static std::vector<iTVPTexture2D*> _toDeleteTextures;
 static uint64_t _recycledTextureCount = 0;
 
+extern "C" void krkrvita_boot_trace(const char *stage);
+
+// Deferred texture destruction, with the lifetime invariant made sound.
+//
+// Upstream Release() queues a texture when RefCount == 1 but leaves RefCount
+// at 1, and RecycleProcess() then deletes every queued texture unconditionally.
+// That leaves two ways for one heap block to end up with two live owners:
+//
+//   - Release() called again on an already-queued texture still sees
+//     RefCount == 1, so the texture is queued a second time and later deleted
+//     twice.
+//   - A queued texture still reports RefCount == 1, so IsIndependent() treats
+//     it as exclusively owned and AddRef() succeeds. Anything that acquires it
+//     between the queueing and the drain is left holding freed memory.
+//
+// Either one lets a freshly created texture land on top of a live one. That
+// matters here because tTVPLayerManager clears its draw buffer to 0xFF000000
+// (LayerManager.cpp:102, :112, :139, :149, :163), and a layer bitmap sharing
+// that block would read opaque black -- the Sharin no Kuni symptom.
+//
+// The fix is to make "queued" a distinct state: RefCount drops to 0 exactly
+// once, so a texture cannot be queued twice, and RecycleProcess() refuses to
+// delete anything that was acquired again after queueing. IsIndependent()
+// reports false for RefCount == 0, so a dead texture is never mistaken for an
+// exclusively owned one and copy-on-write stays conservative.
 void iTVPTexture2D::RecycleProcess()
 {
 	std::vector<iTVPTexture2D*> pending;
 	pending.swap(_toDeleteTextures);
 	for (iTVPTexture2D* tex : pending) {
+		if (tex->RefCount > 0) {
+			// Acquired again between queueing and this drain. Deleting it here
+			// is the use-after-free; keep it, and let its final Release() queue
+			// it again.
+			static bool resurrected_reported = false;
+			if (!resurrected_reported) {
+				krkrvita_boot_trace("yuri-texture-resurrected-after-queue");
+				resurrected_reported = true;
+			}
+			continue;
+		}
 		delete tex;
 		++_recycledTextureCount;
 	}
@@ -3571,6 +3758,45 @@ extern "C" uint64_t krkrvita_yuri_recycled_texture_count()
     if(yuri_render_manager_patched_3 STREQUAL yuri_render_manager_patched_2)
         message(FATAL_ERROR "Yuri frame-boundary texture recycler patch no longer applies")
     endif()
+
+    # Queue a texture exactly once. Leaving RefCount at 1 while queued is what
+    # makes a second Release() queue it again, and a double delete hands one
+    # heap block to two live objects.
+    set(yuri_texture_release_old [=[
+void iTVPTexture2D::Release() {
+	if (RefCount == 1)
+		_toDeleteTextures.push_back(this);
+	else
+		--RefCount;
+}
+]=])
+    set(yuri_texture_release_vita [=[
+void iTVPTexture2D::Release() {
+	if (RefCount <= 0) {
+		// Already queued for destruction. Releasing again would queue it a
+		// second time and delete it twice.
+		static bool double_release_reported = false;
+		if (!double_release_reported) {
+			krkrvita_boot_trace("yuri-texture-double-release");
+			double_release_reported = true;
+		}
+		return;
+	}
+	if (RefCount == 1) {
+		RefCount = 0;
+		_toDeleteTextures.push_back(this);
+		return;
+	}
+	--RefCount;
+}
+]=])
+    string(REPLACE "${yuri_texture_release_old}"
+        "${yuri_texture_release_vita}"
+        yuri_render_manager_patched_3b "${yuri_render_manager_patched_3}")
+    if(yuri_render_manager_patched_3b STREQUAL yuri_render_manager_patched_3)
+        message(FATAL_ERROR "Yuri texture release invariant patch no longer applies")
+    endif()
+    set(yuri_render_manager_patched_3 "${yuri_render_manager_patched_3b}")
     string(REGEX MATCHALL "TVPExecThreadTask\\(taskNum,"
         yuri_render_dispatch_sites "${yuri_render_manager_patched_3}")
     list(LENGTH yuri_render_dispatch_sites yuri_render_dispatch_site_count)
@@ -3581,6 +3807,53 @@ extern "C" uint64_t krkrvita_yuri_recycled_texture_count()
     string(REPLACE "TVPExecThreadTask(taskNum,"
         "TVPExecThreadTaskVita(taskNum,"
         yuri_render_manager_patched_4 "${yuri_render_manager_patched_3}")
+
+    # Every software raster operation funnels through this OperateRect. A
+    # scoped probe here catches whichever operation opacifies a large surface,
+    # without naming the suspect in advance -- which is what each previous
+    # round got wrong, at one flash-install-run-collect cycle apiece.
+    string(REPLACE
+        "#include \"RenderManager.h\""
+        "#include \"RenderManager.h\"\n#include \"krkrvita/yuri_composite_probe.hpp\""
+        yuri_render_manager_patched_5 "${yuri_render_manager_patched_4}")
+    if(yuri_render_manager_patched_5 STREQUAL yuri_render_manager_patched_4)
+        message(FATAL_ERROR "Yuri RenderManager probe include patch no longer applies")
+    endif()
+    set(yuri_render_manager_funnel
+        "\t\t++_drawCount;\n\t\tswitch (textures.size()) {")
+    set(yuri_render_manager_funnel_probed
+        "\t\t++_drawCount;\n\t\tkrkrvita::RasterProbe<iTVPTexture2D> krkrvita_raster_probe(\n\t\t\tmethod ? method->GetName().c_str() : nullptr, tar);\n\t\tswitch (textures.size()) {")
+    string(REPLACE "${yuri_render_manager_funnel}"
+        "${yuri_render_manager_funnel_probed}"
+        yuri_render_manager_patched_6 "${yuri_render_manager_patched_5}")
+    if(yuri_render_manager_patched_6 STREQUAL yuri_render_manager_patched_5)
+        message(FATAL_ERROR "Yuri RenderManager raster funnel patch no longer applies")
+    endif()
+    # OperateRect is not the only public entry point: stretched and perspective
+    # draws arrive through OperateTriangles and OperatePerspective. Probe those
+    # too, so that "no probe-raster line" means the write did not go through the
+    # software render manager at all, rather than "it took the other door".
+    set(yuri_render_manager_tri
+        "\t\tconst tRenderTexQuadArray &textures) override {\n\t\t++_drawCount;\n\t\tassert(textures.size() == 1);")
+    set(yuri_render_manager_tri_probed
+        "\t\tconst tRenderTexQuadArray &textures) override {\n\t\t++_drawCount;\n\t\tkrkrvita::RasterProbe<iTVPTexture2D> krkrvita_raster_probe(\n\t\t\tmethod ? method->GetName().c_str() : nullptr, target);\n\t\tassert(textures.size() == 1);")
+    string(REPLACE "${yuri_render_manager_tri}"
+        "${yuri_render_manager_tri_probed}"
+        yuri_render_manager_patched_7 "${yuri_render_manager_patched_6}")
+    if(yuri_render_manager_patched_7 STREQUAL yuri_render_manager_patched_6)
+        message(FATAL_ERROR "Yuri OperateTriangles probe patch no longer applies")
+    endif()
+    set(yuri_render_manager_persp
+        "\t\tconst tRenderTexQuadArray &textures) {\n\t\tassert(textures.size() == 1);")
+    set(yuri_render_manager_persp_probed
+        "\t\tconst tRenderTexQuadArray &textures) {\n\t\tkrkrvita::RasterProbe<iTVPTexture2D> krkrvita_raster_probe(\n\t\t\tmethod ? method->GetName().c_str() : nullptr, target);\n\t\tassert(textures.size() == 1);")
+    string(REPLACE "${yuri_render_manager_persp}"
+        "${yuri_render_manager_persp_probed}"
+        yuri_render_manager_patched_8 "${yuri_render_manager_patched_7}")
+    if(yuri_render_manager_patched_8 STREQUAL yuri_render_manager_patched_7)
+        message(FATAL_ERROR "Yuri OperatePerspective probe patch no longer applies")
+    endif()
+    set(yuri_render_manager_patched_4 "${yuri_render_manager_patched_8}")
     file(CONFIGURE
         OUTPUT "${yuri_generated_dir}/RenderManager.cpp"
         CONTENT "${yuri_render_manager_patched_4}"
@@ -4375,6 +4648,16 @@ void TJS_INTF_METHOD tTVPBasicDrawDevice::SetDestRectangle(const tTVPRect & rect
         "bool tTVPApplication::StartApplication(ttstr path) {"
         "bool tTVPApplication::StartApplication(ttstr path) {\n\tkrkrvita_boot_trace(\"yuri-start-application-entered\");"
         yuri_application_patched "${yuri_application_patched}")
+    # Kirikiri's System.exeName is the game executable's path, and titles
+    # derive sibling resources from it: "ダメダメなボクに舞い降りた全肯定ママ女神"
+    # refuses to boot unless chopStorageExt(System.exeName) + ".cf" exists.
+    # Yuri returns the project directory here because Android has no game
+    # executable; on Vita the Windows executable is staged with the game, so
+    # resolve it and keep the directory only as the fallback.
+    string(REPLACE
+        "ttstr ExePath() {\n\treturn TVPNativeProjectDir;\n}"
+        "ttstr ExePath() {\n#ifdef __vita__\n\tstatic ttstr resolved_root;\n\tstatic ttstr resolved_executable;\n\tif(!TVPNativeProjectDir.IsEmpty() && TVPNativeProjectDir != resolved_root) {\n\t\tresolved_root = TVPNativeProjectDir;\n\t\tresolved_executable =\n\t\t\tkrkrvita_yuri_project_executable_path(TVPNativeProjectDir);\n\t}\n\tif(!resolved_executable.IsEmpty()) return resolved_executable;\n#endif\n\treturn TVPNativeProjectDir;\n}"
+        yuri_application_patched "${yuri_application_patched}")
     string(REPLACE
         "\tTVPNativeProjectDir = path;"
         "#ifdef __vita__\n\tpath = ttstr(krkrvita::vita_directory_path(\n\t\tstd::u16string_view(path.c_str(), path.GetLen())));\n#endif\n\tTVPNativeProjectDir = path;"
@@ -4783,11 +5066,18 @@ static void TVPInitRippleTransformFuncs()
     list(APPEND yuri_plugin_sources
         "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/retail/yuri_motionplayer_module.cpp")
 
-    # layerExDraw and scriptsEx are Windows plug-ins whose KAGEX script
-    # surfaces are used after a caught load failure.  Register conservative
-    # Vita fallbacks so those globals remain callable during startup.
+    # layerExDraw is a Windows/GDI+ plug-in whose KAGEX script surface is used
+    # after a caught load failure.  Register a conservative Vita fallback so
+    # those globals remain callable during startup; its image operations are
+    # still no-ops, which the compatibility gate must keep reporting.
     list(APPEND yuri_plugin_sources
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/retail/yuri_layerexdraw_module.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/retail/yuri_layerexdraw_module.cpp")
+
+    # scriptsEx is the portable upstream implementation vendored in
+    # third_party/scriptsEx; it attaches to Kirikiri's built-in Scripts class.
+    # The companion module only records the boot trace.
+    list(APPEND yuri_plugin_sources
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/scriptsEx/scriptsEx.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/retail/yuri_scriptsex_module.cpp")
 
     # The debloated Yuri Android binary used as the compatibility oracle ships
@@ -5381,6 +5671,7 @@ static void TVPInitRippleTransformFuncs()
     # Android, Cocos, UI and SDL sources out of it by construction.
     add_library(krkrvita-yuri-vita-platform STATIC EXCLUDE_FROM_ALL
         src/platform/vita/vita_bitmap_allocator.cpp
+        src/platform/vita/yuri_composite_probe.cpp
         src/platform/vita/yuri_input.cpp
         src/platform/vita/yuri_performance.cpp
         src/platform/vita/yuri_storage_preflight.cpp

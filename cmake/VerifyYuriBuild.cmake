@@ -863,8 +863,39 @@ require_text("${SOURCE_DIR}/src/platform/vita/yuri_main.cpp"
 require_text("${SOURCE_DIR}/src/engine/vita/vitagl_presenter.cpp"
     "vglWaitVblankStart(GL_FALSE)"
     "VitaGL presentation cannot add a vblank stall to Yuri's engine tick")
+# sigcheck must stay on the calling thread. TVPCreateStream walks Yuri's media
+# manager and auto-path table, TJS reference counts are plain ints, and
+# TVPEventQueue is an unlocked vector -- none of it survives a worker thread.
+forbid_text("${SOURCE_DIR}/src/engine/retail/yuri_sigcheck_module.cpp"
+    "std::thread"
+    "sigcheck must not verify on a worker thread")
+require_text("${SOURCE_DIR}/src/engine/retail/yuri_sigcheck_module.cpp"
+    "deliver_done(owner, handler, verified, error);"
+    "sigcheck delivers its result through the event queue")
+# A file with no .sig is unsigned, not corrupt. The reference plug-in passes it;
+# failing it refuses intact retail titles (see allokmama.exe).
+require_text("${SOURCE_DIR}/src/engine/retail/yuri_sigcheck_module.cpp"
+    "if (!TVPIsExistentStorage(signature_path)) {"
+    "an absent signature is treated as unsigned rather than as a failure")
+
+# System.exeName must be the game executable, not the project directory:
+# "ダメダメなボクに舞い降りた全肯定ママ女神" exits at script/first.ks unless
+# chopStorageExt(System.exeName) + ".cf" resolves.
+require_text("${GENERATED_DIR}/Application.cpp"
+    "krkrvita_yuri_project_executable_path(TVPNativeProjectDir)"
+    "ExePath resolves the staged Windows executable on Vita")
+require_text("${SOURCE_DIR}/src/platform/vita/yuri_storage_preflight.cpp"
+    "krkrvita::vita_select_executable_name(names)"
+    "the executable is chosen by the tested selection rule")
+require_text("${COMPILE_COMMANDS}"
+    "core/base/win32/SystemImpl.cpp"
+    "System.exeName's implementation is compiled into the Vita backend")
+
 require_text("${SOURCE_DIR}/src/engine/vita/vitagl_presenter.cpp"
-    "kApplicationRamThreshold"
+    "sceKernelGetFreeMemorySize(&info)"
+    "VitaGL's application reserve is measured, not assumed")
+require_text("${SOURCE_DIR}/src/engine/vita/vitagl_presenter.cpp"
+    "application_ram_threshold()"
     "VitaGL's USER_RW argument is treated as an application reserve threshold")
 require_text("${GENERATED_DIR}/RenderManager.cpp"
     "pending.swap(_toDeleteTextures)"
@@ -916,8 +947,11 @@ require_text("${SOURCE_DIR}/include/krkrvita/vita_memory_budget.hpp"
     "kVitaNewlibHeapBytes = 128u * 1024u * 1024u"
     "the fixed newlib heap leaves kernel space for bitmap memblocks")
 require_text("${SOURCE_DIR}/include/krkrvita/vita_memory_budget.hpp"
-    "80 * 1024 * 1024"
-    "VitaGL leaves the bitmap and non-graphics USER_RW reserve untouched")
+    "kVitaGlPoolBytes = 48u * 1024u * 1024u"
+    "VitaGL keeps a presenter-sized pool instead of all free USER_RW")
+require_text("${SOURCE_DIR}/src/platform/vita/vita_bitmap_allocator.cpp"
+    "vita_bitmap_memblock_budget_allows(free_user_memory(), size)"
+    "the large-bitmap tier is bounded by free USER_RW, not a fixed ceiling")
 require_text("${SOURCE_DIR}/src/platform/vita/vita_bitmap_allocator.cpp"
     "SCE_KERNEL_MEMBLOCK_TYPE_USER_RW"
     "large CPU bitmaps use cached Vita USER_RW memblocks")
@@ -1362,18 +1396,24 @@ require_text("${SOURCE_DIR}/src/engine/retail/yuri_layerexdraw_module.cpp"
 require_text("${COMPILE_COMMANDS}"
     "src/engine/retail/yuri_layerexdraw_module.cpp"
     "the layerExDraw compatibility surface is compiled into the Vita backend")
-require_text("${SOURCE_DIR}/include/krkrvita/scriptsex_surface.hpp"
-    "global.Scripts.getObjectCount"
-    "scriptsEx exposes the startup object-count script surface")
-require_text("${SOURCE_DIR}/src/engine/retail/yuri_scriptsex_module.cpp"
-    "scriptsex_surface_script"
-    "scriptsEx registers the tested shared TJS surface")
+# scriptsEx is the vendored upstream implementation, not a script surface.
+# A TJS fallback cannot answer getObjectCount at all, because TJS2 dictionaries
+# expose no "count" member, so require the real ncbind registration.
+require_text("${SOURCE_DIR}/third_party/scriptsEx/scriptsEx.cpp"
+    "NCB_ATTACH_CLASS(ScriptsAdd, Scripts)"
+    "scriptsEx attaches to Kirikiri's built-in Scripts class")
+require_text("${SOURCE_DIR}/third_party/scriptsEx/scriptsEx.cpp"
+    "RawCallback(TJS_W(\"getObjectCount\"), &ScriptsAdd::getCount"
+    "scriptsEx registers the native startup object-count member")
 require_text("${SOURCE_DIR}/src/engine/retail/yuri_scriptsex_module.cpp"
     "retail-scriptsex-surface-ready"
     "scriptsEx registration is observable on hardware")
 require_text("${COMPILE_COMMANDS}"
+    "third_party/scriptsEx/scriptsEx.cpp"
+    "the upstream scriptsEx implementation is compiled into the Vita backend")
+require_text("${COMPILE_COMMANDS}"
     "src/engine/retail/yuri_scriptsex_module.cpp"
-    "the scriptsEx compatibility surface is compiled into the Vita backend")
+    "the scriptsEx boot trace is compiled into the Vita backend")
 require_text("${SOURCE_DIR}/src/engine/retail/yuri_layerexsave_probe.cpp"
     "retail-layerexsave-ready"
     "the sample's layerExSave registration is observable on hardware")
@@ -1635,6 +1675,7 @@ foreach(required_source
     "src/engine/retail/yuri_shrink_copy.cpp"
     "src/engine/retail/yuri_motionplayer_module.cpp"
     "src/engine/retail/yuri_layerexdraw_module.cpp"
+    "third_party/scriptsEx/scriptsEx.cpp"
     "src/engine/retail/yuri_scriptsex_module.cpp"
     "src/platform/vita/yuri_threading_self_test.cpp"
     "src/platform/vita/yuri_performance.cpp"
