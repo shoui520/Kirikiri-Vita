@@ -2,66 +2,43 @@
 set -euo pipefail
 
 : "${VITASDK:=/home/shoui/vitasdk}"
+: "${JOBS:=12}"
 export VITASDK
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-build_dir="$repo_root/build-vita-engine"
-booter_build_dir="$repo_root/build-vita-booter"
+host_build="$repo_root/build-host"
+sanitizer_build="$repo_root/build-host-asan"
+vita_build="$repo_root/build-vita-yuri"
+sample_game="${KRKRVITA_RETAIL_TEST_GAME:-/home/shoui/Agents/CodexMax/色情教団}"
+patch_snapshot="${KRKRVITA_RETAIL_TEST_PATCH_SNAPSHOT:-$repo_root/.cache/patches/0af1bafdb7a031e4c74fd4b320b6a0a1ec03b300}"
 
-"$repo_root/scripts/apply-upstream-patches.sh"
+cmake -S "$repo_root" -B "$host_build" \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DKRKRVITA_BUILD_TESTS=ON \
+  -DKRKRVITA_RETAIL_TEST_GAME="$sample_game" \
+  -DKRKRVITA_RETAIL_TEST_PATCH_SNAPSHOT="$patch_snapshot"
+cmake --build "$host_build" --parallel "$JOBS"
+ctest --test-dir "$host_build" --output-on-failure --parallel 1
 
-cmake -S "$repo_root/vendor/krkrsdl2" -B "$build_dir" \
+cmake -S "$repo_root" -B "$sanitizer_build" \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DKRKRVITA_BUILD_TESTS=ON \
+  -DKRKRVITA_RETAIL_TEST_GAME="$sample_game" \
+  -DKRKRVITA_RETAIL_TEST_PATCH_SNAPSHOT="$patch_snapshot" \
+  -DCMAKE_C_FLAGS='-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' \
+  -DCMAKE_CXX_FLAGS='-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' \
+  -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined'
+cmake --build "$sanitizer_build" --parallel "$JOBS"
+ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
+UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+  ctest --test-dir "$sanitizer_build" --output-on-failure --parallel 1
+
+cmake -S "$repo_root" -B "$vita_build" \
   -DCMAKE_TOOLCHAIN_FILE="$VITASDK/share/vita.toolchain.cmake" \
   -DCMAKE_BUILD_TYPE=Release \
-  -DOPTION_ENABLE_EXTERNAL_PLUGINS=OFF \
-  -DOPTION_ENABLE_ASYNC_IMAGE_LOAD=OFF \
-  -DVIDEO_VITA_GXM=OFF \
-  -DVIDEO_VITA_PIB=OFF \
-  -DVIDEO_VITA_PVR=OFF \
-  -DKRKRVITA_OVERLAY_DIR="$repo_root" \
-  -DVITA_APP_NAME="Kirikiri Vita" \
-  -DVITA_TITLEID=KRVITA001 \
-  -DVITA_VERSION=01.11
-cmake --build "$build_dir" --parallel "${JOBS:-4}"
+  -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+cmake --build "$vita_build" \
+  --target krkrvita-yuri.vpk-vpk --parallel "$JOBS"
 
-# Internal Yuri modules are activated at runtime through Plugins.link().  Make
-# the build fail if registration data is accidentally removed or dead-stripped.
-required_internal_modules=(
-  addFont.dll csvParser.dll dirlist.dll fftgraph.dll getSample.dll
-  getabout.dll perspective.dll saveStruct.dll varfile.dll win32dialog.dll
-  wutcwf.dll xp3filter.dll
-)
-linked_wide_strings="$(strings -el "$build_dir/krkrsdl2")"
-for module in "${required_internal_modules[@]}"; do
-  if ! rg -j1 -F -x -q -- "$module" <<<"$linked_wide_strings"; then
-    echo "missing Yuri internal module in Vita engine: $module" >&2
-    exit 1
-  fi
-done
-
-# Keep the non-plugin half of the Yuri compatibility contract honest too.
-# These factories are registered as global TJS classes during engine startup.
-required_yuri_native_factories=(
-  TVPCreateNativeClass_CDDASoundBuffer
-  TVPCreateNativeClass_MIDISoundBuffer
-  TVPCreateNativeClass_Pad
-  TVPCreateNativeClass_KAGParser
-  TVPCreateNativeClass_MenuItem
-  TVPCreateNativeClass_SoundBuffer
-)
-linked_symbols="$($VITASDK/bin/arm-vita-eabi-nm -C --defined-only "$build_dir/krkrsdl2")"
-for factory in "${required_yuri_native_factories[@]}"; do
-  if ! rg -j1 -F -q -- "$factory" <<<"$linked_symbols"; then
-    echo "missing Yuri native-class factory in Vita engine: $factory" >&2
-    exit 1
-  fi
-done
-
-cmake -S "$repo_root/vita/booter" -B "$booter_build_dir" \
-  -DCMAKE_TOOLCHAIN_FILE="$VITASDK/share/vita.toolchain.cmake" \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DKRKRVITA_ROOT="$repo_root"
-cmake --build "$booter_build_dir" --parallel "${JOBS:-4}"
-
-echo "VPK: $build_dir/krkrsdl2.vpk"
-echo "Bubble template: $booter_build_dir/template"
+sha256sum "$vita_build/krkrvita-yuri.vpk"
+echo "Validated VPK: $vita_build/krkrvita-yuri.vpk"

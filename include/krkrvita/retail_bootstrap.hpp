@@ -1,8 +1,5 @@
 #pragma once
 
-// Called by the wholesale engine immediately before startup.tjs.
-void krkrvita_execute_patch_script();
-
 // Raw SceIofilemgr diagnostics. These are safe before C++ global constructors
 // and do not depend on SDL, VitaGL, or libc stdio being initialized.
 extern "C" void krkrvita_boot_trace(const char *stage);

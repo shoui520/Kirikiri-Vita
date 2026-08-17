@@ -8,3 +8,6 @@ compile_commands.json
 *.self
 *.sfo
 
+# User-supplied proprietary runtime dependency. It must remain external at
+# ux0:data/krkrvita/msgothic.ttc and must never enter source control or a VPK.
+/vendor/msgothic.ttc

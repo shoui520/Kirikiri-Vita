@@ -1,4 +1,5 @@
 #include "krkrvita/vita_input_bridge.hpp"
+#include "krkrvita/vita_input_mapping.hpp"
 
 #include "CharacterSet.h"
 #include "DebugIntf.h"
@@ -35,20 +36,7 @@ std::string trim(std::string value)
 void set_defaults()
 {
 	configuration = InputConfiguration();
-	configuration.bindings["cross"] = "mouse_left";
-	configuration.bindings["circle"] = "mouse_right";
-	configuration.bindings["square"] = "key_space";
-	configuration.bindings["triangle"] = "key_escape";
-	configuration.bindings["ltrigger"] = "key_pageup";
-	configuration.bindings["rtrigger"] = "key_pagedown";
-	configuration.bindings["dpad_up"] = "key_up";
-	configuration.bindings["dpad_down"] = "key_down";
-	configuration.bindings["dpad_left"] = "key_left";
-	configuration.bindings["dpad_right"] = "key_right";
-	configuration.bindings["start"] = "key_enter";
-	configuration.bindings["select"] = "menu";
-	configuration.bindings["left_stick"] = "mouse_cursor";
-	configuration.bindings["front_touch"] = "mouse_absolute";
+	configuration.bindings = krkrvita::vita_default_input_bindings();
 }
 
 const char *button_name(Uint8 button)
@@ -111,6 +99,8 @@ void load_profile(const std::string &path)
 		TVPAddImportantLog(ttstr(TJS_W("Cannot open Vita input profile; using defaults")));
 		return;
 	}
+	int mapping_version = 1;
+	std::map<std::string, std::string> profile_bindings;
 	std::string line;
 	while(std::getline(stream, line))
 	{
@@ -123,7 +113,9 @@ void load_profile(const std::string &path)
 		try
 		{
 			if(key.compare(0, 5, "bind.") == 0)
-				configuration.bindings[key.substr(5)] = value;
+				profile_bindings[key.substr(5)] = value;
+			else if(key == "input_mapping_version")
+				mapping_version = std::max(1, std::stoi(value));
 			else if(key == "analog_deadzone")
 				configuration.deadzone = std::max(0.0f, std::min(0.95f, std::stof(value)));
 			else if(key == "cursor_speed")
@@ -135,6 +127,12 @@ void load_profile(const std::string &path)
 		{
 			TVPAddImportantLog(ttstr(TJS_W("Ignoring invalid Vita input profile value")));
 		}
+	}
+	for(const auto &entry : profile_bindings)
+	{
+		if(krkrvita::vita_input_binding_is_superseded_default(
+			mapping_version, entry.first, entry.second)) continue;
+		configuration.bindings[entry.first] = entry.second;
 	}
 	TVPAddImportantLog(ttstr(TJS_W("Loaded per-game Vita controller profile")));
 }

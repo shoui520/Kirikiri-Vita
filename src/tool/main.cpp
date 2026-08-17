@@ -31,12 +31,14 @@ void usage() {
         << "  krkrvita-tool scan GAME_DIR\n"
         << "  krkrvita-tool resolve GAME_DIR ALLDATA_JS\n"
         << "  krkrvita-tool prepare GAME_DIR CACHE_DIR\n"
+        << "  krkrvita-tool prepare-heuristic GAME_DIR CACHE_DIR\n"
         << "  krkrvita-tool vita-stage GAME_DIR CACHE_DIR OUTPUT_DIR [VITA_GAME_PATH]\n"
         << "  krkrvita-tool bubble-assets GAME_DIR OUTPUT_DIR [TITLE_ID]\n"
         << "  krkrvita-tool bubble-stage GAME_DIR TEMPLATE_DIR OUTPUT_DIR [TITLE_ID]\n"
         << "  krkrvita-tool detect-filter HASH_HEX FILE_NAME SAMPLE [..]\n"
         << "  krkrvita-tool xp3-list ARCHIVE [LIMIT]\n"
         << "  krkrvita-tool xp3-detect ARCHIVE\n"
+        << "  krkrvita-tool xp3-diagnose ARCHIVE\n"
         << "  krkrvita-tool xp3-verify ARCHIVE XP3FILTER_TJS\n"
         << "  krkrvita-tool xp3-extract ARCHIVE ENTRY OUTPUT [XP3FILTER_TJS]\n"
         << "  krkrvita-tool storage-extract PROFILE STORAGE OUTPUT [--text]\n"
@@ -171,22 +173,53 @@ PreparedGame prepare_game(const std::filesystem::path& game_path,
     return {std::move(game), std::move(profile), std::move(files), verification};
 }
 
-int command_prepare(const std::filesystem::path& game_path,
-                    const std::filesystem::path& cache_path) {
-    auto prepared = prepare_game(game_path, cache_path);
+PreparedGame prepare_game_heuristic(const std::filesystem::path& game_path,
+                                    const std::filesystem::path& cache_path) {
+    // Keep the inference boundary pure. A failure/phase-2 diagnosis below is
+    // reached without opening or parsing any executable. Only after a filter
+    // has been synthesized and archive-verified do we perform the ordinary
+    // full scan needed for the stable runtime profile identity.
+    auto archive_game = GameScanner::scan(game_path, GameScanMode::ArchivesOnly);
+    std::string error;
+    const auto fallback = prepare_filter_fallback(
+        archive_game, cache_path / "generated", &error, false);
+    if (!fallback) throw std::runtime_error(error);
+    FilterVerification verification;
+    if (!verify_retail_filter(archive_game, fallback->path, &verification, &error))
+        throw std::runtime_error(error);
+
+    auto game = GameScanner::scan(game_path);
+    auto profile = GameProfile::defaults(game);
+    profile.xp3_filter_path = fallback->path;
+    profile.patch_root = fallback->path.parent_path();
+    profile.filter_origin = fallback->origin;
+    profile.patch_commit = "archive-only";
+    return {std::move(game), std::move(profile), {}, verification};
+}
+
+int print_prepared(PreparedGame prepared, const std::filesystem::path& cache_path) {
     auto& profile = prepared.profile;
     std::string error;
     const auto profile_path = cache_path / "profiles" / (profile.game_id + ".ini");
     if (!profile.save(profile_path, &error)) throw std::runtime_error(error);
-    for (const auto& file : prepared.files) {
+    for (const auto& file : prepared.files)
         std::cout << "cached: " << file.cache_path << " sha256=" << file.sha256 << '\n';
-    }
     std::cout << "xp3_filter: " << profile.xp3_filter_path << '\n'
               << "filter_origin: " << profile.filter_origin << '\n'
               << "filter_verified: " << prepared.verification.recognized << '/'
-              << prepared.verification.samples << '\n';
-    std::cout << "profile: " << profile_path << '\n';
+              << prepared.verification.samples << '\n'
+              << "profile: " << profile_path << '\n';
     return 0;
+}
+
+int command_prepare(const std::filesystem::path& game_path,
+                    const std::filesystem::path& cache_path) {
+    return print_prepared(prepare_game(game_path, cache_path), cache_path);
+}
+
+int command_prepare_heuristic(const std::filesystem::path& game_path,
+                              const std::filesystem::path& cache_path) {
+    return print_prepared(prepare_game_heuristic(game_path, cache_path), cache_path);
 }
 
 int command_vita_stage(const std::filesystem::path& game_path,
@@ -299,15 +332,20 @@ int command_detect_filter(int argc, char** argv) {
         sample.bytes = read_file(argv[i + 2]);
         samples.push_back(std::move(sample));
     }
-    const auto rule = FilterHeuristic::detect(samples);
-    if (!rule) {
-        std::cout << "filter: unknown\n";
+    const auto analysis = FilterHeuristic::analyze(samples);
+    if (!analysis.rule) {
+        std::cout << "filter: unknown\n"
+                  << "phase: " << (analysis.disposition ==
+                        FilterInferenceDisposition::RequiresExecutableAnalysis ? 2 : 1) << '\n'
+                  << "reason: " << analysis.reason << '\n';
         return 2;
     }
-    std::cout << "filter: " << rule->name() << '\n'
-              << "score: " << rule->score << '\n'
-              << "confidence: " << rule->confidence << '\n'
-              << "tjs: " << rule->to_tjs();
+    const auto& rule = *analysis.rule;
+    std::cout << "filter: " << rule.name() << '\n'
+              << "phase: 1\n"
+              << "score: " << rule.score << '\n'
+              << "confidence: " << rule.confidence << '\n'
+              << "tjs: " << rule.to_tjs();
     return 0;
 }
 
@@ -344,16 +382,63 @@ int command_xp3_list(const std::filesystem::path& path, std::size_t limit) {
 int command_xp3_detect(const std::filesystem::path& path) {
     const auto archive = open_xp3(path);
     const auto samples = archive_samples(archive);
-    const auto rule = FilterHeuristic::detect(samples);
+    const auto analysis = FilterHeuristic::analyze(samples);
     std::cout << "samples: " << samples.size() << '\n';
-    if (!rule) {
-        std::cout << "filter: unknown\n";
+    if (!analysis.rule) {
+        std::cout << "filter: unknown\n"
+                  << "phase: " << (analysis.disposition ==
+                        FilterInferenceDisposition::RequiresExecutableAnalysis ? 2 : 1) << '\n'
+                  << "reason: " << analysis.reason << '\n';
         return 2;
     }
-    std::cout << "filter: " << rule->name() << '\n'
-              << "score: " << rule->score << '\n'
-              << "confidence: " << rule->confidence << '\n'
-              << "tjs: " << rule->to_tjs();
+    const auto& rule = *analysis.rule;
+    std::cout << "filter: " << rule.name() << '\n'
+              << "phase: 1\n"
+              << "score: " << rule.score << '\n'
+              << "confidence: " << rule.confidence << '\n'
+              << "tjs: " << rule.to_tjs();
+    return 0;
+}
+
+std::string diagnostic_extension(std::string_view filename) {
+    const auto dot = filename.rfind('.');
+    if (dot == std::string_view::npos) return "<none>";
+    std::string extension(filename.substr(dot));
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](unsigned char value) {
+                       return static_cast<char>(std::tolower(value));
+                   });
+    return extension;
+}
+
+int command_xp3_diagnose(const std::filesystem::path& path) {
+    const auto archive = open_xp3(path);
+    const auto samples = archive_samples(archive);
+    std::map<std::string, std::vector<FilterSample>> groups;
+    for (const auto& sample : samples)
+        groups[diagnostic_extension(sample.filename)].push_back(sample);
+    std::cout << "samples: " << samples.size() << '\n';
+    for (const auto& [extension, group] : groups) {
+        const auto analysis = FilterHeuristic::analyze(group);
+        std::cout << "group: extension=" << extension << " samples=" << group.size()
+                  << " constrained=" << analysis.constrained_samples << " filter="
+                  << (analysis.rule ? analysis.rule->name() : "unknown") << " phase="
+                  << (analysis.disposition ==
+                        FilterInferenceDisposition::RequiresExecutableAnalysis ? 2 : 1)
+                  << " reason=\"" << analysis.reason << "\"\n";
+        for (const auto& sample : group) {
+            std::cout << "  sample: hash=" << std::hex << std::setw(8)
+                      << std::setfill('0') << sample.hash << std::dec
+                      << std::setfill(' ') << " bytes=" << sample.bytes.size()
+                      << " prefix=";
+            for (std::size_t i = 0; i < std::min<std::size_t>(8, sample.bytes.size()); ++i) {
+                std::cout << std::hex << std::setw(2) << std::setfill('0')
+                          << unsigned(sample.bytes[i]);
+            }
+            std::cout << std::dec << std::setfill(' ') << " name=\""
+                      << sample.filename << "\"\n";
+        }
+    }
     return 0;
 }
 
@@ -397,7 +482,10 @@ int command_xp3_extract(const std::filesystem::path& path, std::string_view name
             throw std::runtime_error(error);
         }
     }
-    auto bytes = archive.read(*entry, 64 * 1024 * 1024,
+    // Retail movie entries routinely exceed 64 MiB. This is a host-side
+    // explicit extraction command, so admit a bounded 512 MiB payload while
+    // retaining the archive reader's normal overflow and truncation checks.
+    auto bytes = archive.read(*entry, 512u * 1024u * 1024u,
                               filter ? &*filter : nullptr, &error);
     if (!bytes) throw std::runtime_error(error);
     if (!output.parent_path().empty()) std::filesystem::create_directories(output.parent_path());
@@ -468,6 +556,8 @@ int main(int argc, char** argv) {
         if (command == "scan" && argc == 3) return command_scan(argv[2]);
         if (command == "resolve" && argc == 4) return command_resolve(argv[2], argv[3]);
         if (command == "prepare" && argc == 4) return command_prepare(argv[2], argv[3]);
+        if (command == "prepare-heuristic" && argc == 4)
+            return command_prepare_heuristic(argv[2], argv[3]);
         if (command == "vita-stage" && (argc == 5 || argc == 6)) {
             return command_vita_stage(argv[2], argv[3], argv[4],
                                       argc == 6 ? argv[5] : "");
@@ -484,6 +574,7 @@ int main(int argc, char** argv) {
             return command_xp3_list(argv[2], argc == 4 ? std::stoul(argv[3]) : 20);
         }
         if (command == "xp3-detect" && argc == 3) return command_xp3_detect(argv[2]);
+        if (command == "xp3-diagnose" && argc == 3) return command_xp3_diagnose(argv[2]);
         if (command == "xp3-verify" && argc == 4) return command_xp3_verify(argv[2], argv[3]);
         if (command == "xp3-extract" && (argc == 5 || argc == 6)) {
             return command_xp3_extract(argv[2], argv[3], argv[4],

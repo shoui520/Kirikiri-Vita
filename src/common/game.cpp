@@ -9,6 +9,11 @@
 #include <fstream>
 #include <stdexcept>
 
+#ifdef __vita__
+#include <psp2/io/dirent.h>
+#include <psp2/io/stat.h>
+#endif
+
 namespace krkrvita {
 namespace {
 
@@ -114,35 +119,79 @@ std::string normalize_game_name(std::string_view utf8) {
     return output;
 }
 
-GameDescriptor GameScanner::scan(const std::filesystem::path& root) {
+GameDescriptor GameScanner::scan(const std::filesystem::path& root,
+                                 GameScanMode mode) {
+#ifdef __vita__
+    const std::string native_root = root.string();
+    const SceUID directory = sceIoDopen(native_root.c_str());
+    if (directory < 0) {
+        throw std::runtime_error("game path is not a directory: " + native_root);
+    }
+#else
     if (!std::filesystem::is_directory(root)) {
         throw std::runtime_error("game path is not a directory: " + root.string());
     }
+#endif
 
     GameDescriptor game;
+#ifdef __vita__
+    // realpath/canonical do not understand Vita device prefixes reliably.
+    // The caller has already selected an absolute ux0: path, so retain it.
+    game.root = root;
+#else
     game.root = std::filesystem::canonical(root);
+#endif
     game.directory_name = game.root.filename().string();
 
     std::vector<GameFile> executables;
     std::vector<GameFile> fingerprint_files;
+#ifdef __vita__
+    SceIoDirent entry{};
+    while (sceIoDread(directory, &entry) > 0) {
+        if (!SCE_S_ISREG(entry.d_stat.st_mode)) {
+            entry = {};
+            continue;
+        }
+        const std::filesystem::path path = game.root / entry.d_name;
+        GameFile file{path, entry.d_name,
+                      static_cast<std::uint64_t>(entry.d_stat.st_size)};
+        const auto extension = lower_extension(path);
+        if (extension == ".exe" && mode == GameScanMode::Full) {
+            executables.push_back(file);
+        } else if (extension == ".xp3") {
+            game.archives.push_back(file);
+        } else if (mode == GameScanMode::Full &&
+                   (extension == ".tpm" || extension == ".dll")) {
+            game.plugins.push_back(file);
+        }
+        if (extension == ".xp3" || (mode == GameScanMode::Full &&
+            (extension == ".exe" || extension == ".tpm" || extension == ".dll"))) {
+            fingerprint_files.push_back(file);
+        }
+        entry = {};
+    }
+    sceIoDclose(directory);
+#else
     for (const auto& item : std::filesystem::directory_iterator(game.root)) {
         if (!item.is_regular_file()) {
             continue;
         }
         GameFile file{item.path(), item.path().filename().string(), item.file_size()};
         const auto extension = lower_extension(item.path());
-        if (extension == ".exe") {
+        if (extension == ".exe" && mode == GameScanMode::Full) {
             executables.push_back(file);
         } else if (extension == ".xp3") {
             game.archives.push_back(file);
-        } else if (extension == ".tpm" || extension == ".dll") {
+        } else if (mode == GameScanMode::Full &&
+                   (extension == ".tpm" || extension == ".dll")) {
             game.plugins.push_back(file);
         }
-        if (extension == ".exe" || extension == ".xp3" || extension == ".tpm" ||
-            extension == ".dll") {
+        if (extension == ".xp3" || (mode == GameScanMode::Full &&
+            (extension == ".exe" || extension == ".tpm" || extension == ".dll"))) {
             fingerprint_files.push_back(file);
         }
     }
+#endif
 
     auto executable_score = [](const GameFile& file) {
         auto name = normalize_game_name(file.name);
@@ -161,7 +210,7 @@ GameDescriptor GameScanner::scan(const std::filesystem::path& root) {
         return executable_score(left) > executable_score(right);
     });
 
-    if (!executables.empty()) {
+    if (mode == GameScanMode::Full && !executables.empty()) {
         game.executable = executables.front().path;
         game.executable_stem = game.executable.stem().string();
         PeResources pe(game.executable);
@@ -191,7 +240,7 @@ GameDescriptor GameScanner::scan(const std::filesystem::path& root) {
         fingerprint.update(normalized);
         fingerprint.update(&file.size, sizeof(file.size));
     }
-    if (!game.executable.empty()) {
+    if (mode == GameScanMode::Full && !game.executable.empty()) {
         hash_file_prefix(fingerprint, game.executable);
     }
     game.fingerprint = Sha256::hex(fingerprint.finish());
@@ -199,4 +248,3 @@ GameDescriptor GameScanner::scan(const std::filesystem::path& root) {
 }
 
 } // namespace krkrvita
-

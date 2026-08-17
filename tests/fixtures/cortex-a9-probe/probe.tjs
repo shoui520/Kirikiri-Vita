@@ -1,0 +1,5 @@
+function armv7_probe(value) {
+    var table = %[ alpha: 3, beta: 5, gamma: 8 ];
+    return ((value << 23) | (value >>> 8)) + table.alpha + table.beta + table.gamma;
+}
+var armv7_probe_result = armv7_probe(2221053586956454128);

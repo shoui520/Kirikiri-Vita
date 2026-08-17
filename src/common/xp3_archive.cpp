@@ -8,8 +8,10 @@
 #include <cctype>
 #include <fstream>
 #include <limits>
+#include <map>
 #include <span>
 #include <stdexcept>
+#include <tuple>
 
 #include <zlib.h>
 
@@ -226,9 +228,11 @@ void parse_index(std::span<const std::uint8_t> index, std::uint64_t base,
             logical_offset += segment.original_size;
             entry.segments.push_back(segment);
         }
-        if (logical_offset != entry.original_size) {
-            throw std::runtime_error("XP3 segment sizes do not match file metadata");
-        }
+        // Match Kirikiri's reader: protected archives commonly contain a
+        // warning/dummy entry whose info size intentionally differs from its
+        // segment total. The engine accepts the index and fails only if that
+        // malformed storage is actually read. Rejecting the whole archive
+        // here prevents analysis of every legitimate entry that follows it.
         entries.push_back(std::move(entry));
     }
 }
@@ -275,13 +279,49 @@ std::vector<std::uint8_t> read_segment_prefix(std::ifstream& stream,
 
 bool useful_filter_sample(std::string_view name) {
     const auto dot = name.rfind('.');
-    if (dot == std::string_view::npos) return false;
+    if (dot == std::string_view::npos) {
+        // Some protected KiriKiri Z archives replace every logical filename
+        // with a hexadecimal digest. Sampling a few of those entries cannot
+        // provide signatures, but it lets phase 1 diagnose that archive-only
+        // evidence was intentionally removed instead of reporting "no data".
+        return name.size() >= 16 && std::all_of(name.begin(), name.end(), [](unsigned char c) {
+            return std::isxdigit(c) != 0;
+        });
+    }
     std::string extension(name.substr(dot));
     std::transform(extension.begin(), extension.end(), extension.begin(),
                    [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
     return extension == ".png" || extension == ".jpg" || extension == ".jpeg" ||
            extension == ".ogg" || extension == ".wav" || extension == ".tlg" ||
-           extension == ".tjs" || extension == ".ks";
+           extension == ".tjs" || extension == ".ks" || extension == ".bmp" ||
+           extension == ".webp" || extension == ".mp3" || extension == ".asd" ||
+           extension == ".mpg" || extension == ".mpeg" || extension == ".scn" ||
+           extension == ".wmv" || extension == ".psb" || extension == ".sli" ||
+           extension == ".script" || extension == ".ini" || extension == ".csv" ||
+           extension == ".json" || extension == ".xml";
+}
+
+std::string sample_extension(std::string_view name) {
+    const auto dot = name.rfind('.');
+    if (dot == std::string_view::npos) return {};
+    std::string extension(name.substr(dot));
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+    return extension;
+}
+
+int sample_priority(std::string_view name) {
+    const auto extension = sample_extension(name);
+    if (extension == ".png" || extension == ".ogg" || extension == ".wav" ||
+        extension == ".webp" || extension == ".tlg") return 0;
+    if (extension == ".jpg" || extension == ".jpeg" || extension == ".bmp" ||
+        extension == ".mp3" || extension == ".mpg" || extension == ".mpeg" ||
+        extension == ".wmv" || extension == ".psb") return 1;
+    if (extension == ".tjs" || extension == ".ks" || extension == ".scn" ||
+        extension == ".script" || extension == ".ini" || extension == ".csv" ||
+        extension == ".asd" || extension == ".sli" || extension == ".json" ||
+        extension == ".xml") return 2;
+    return 3;
 }
 
 } // namespace
@@ -405,11 +445,40 @@ std::vector<FilterSample> collect_xp3_filter_samples(
     Xp3FilterVm* filter, std::string* error) {
     std::vector<FilterSample> samples;
     if (!maximum) return samples;
-    for (const auto& entry : archive.entries()) {
-        if (!useful_filter_sample(entry.name) || !entry.original_size) continue;
-        auto bytes = archive.read_prefix(entry, 512, filter, error);
+    std::vector<const Xp3Entry*> candidates;
+    for (const auto& entry : archive.entries())
+        if (useful_filter_sample(entry.name) && entry.original_size) candidates.push_back(&entry);
+    std::stable_sort(candidates.begin(), candidates.end(), [](const auto* left, const auto* right) {
+        const auto left_key = std::tuple(sample_priority(left->name), sample_extension(left->name),
+                                         left->hash);
+        const auto right_key = std::tuple(sample_priority(right->name), sample_extension(right->name),
+                                          right->hash);
+        return left_key < right_key;
+    });
+
+    // Take one file of each type before taking a second of any type. Different
+    // signatures and independent hashes are substantially stronger evidence
+    // than the first N adjacent sprites in index order.
+    std::vector<const Xp3Entry*> selected;
+    std::map<std::string, std::vector<const Xp3Entry*>> by_extension;
+    for (const auto* entry : candidates) by_extension[sample_extension(entry->name)].push_back(entry);
+    for (std::size_t round = 0; selected.size() < maximum; ++round) {
+        bool added = false;
+        for (const auto& [_, entries] : by_extension) {
+            if (round >= entries.size()) continue;
+            selected.push_back(entries[round]);
+            added = true;
+            if (selected.size() == maximum) break;
+        }
+        if (!added) break;
+    }
+    std::stable_sort(selected.begin(), selected.end(), [](const auto* left, const auto* right) {
+        return sample_priority(left->name) < sample_priority(right->name);
+    });
+    for (const auto* entry : selected) {
+        auto bytes = archive.read_prefix(*entry, 4096, filter, error);
         if (!bytes) return {};
-        samples.push_back({entry.hash, 0, entry.name, std::move(*bytes)});
+        samples.push_back({entry->hash, 0, entry->name, std::move(*bytes)});
         if (samples.size() == maximum) break;
     }
     return samples;

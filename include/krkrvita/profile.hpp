@@ -1,6 +1,7 @@
 #pragma once
 
 #include "krkrvita/game.hpp"
+#include "krkrvita/vita_input_mapping.hpp"
 
 #include <filesystem>
 #include <map>
@@ -10,6 +11,7 @@
 namespace krkrvita {
 
 struct InputProfile {
+    int mapping_version = vita_input_mapping_version;
     std::map<std::string, std::string> bindings;
     float analog_deadzone = 0.18f;
     float cursor_speed = 780.0f;

@@ -1,0 +1,9 @@
+preinit-entered
+main-entered
+vita-newlib-heap-128m
+vita-main-thread-stack-2m
+vita-threading-self-test-entered
+vita-threading-self-test-passed
+retail-launch-resolved
+yuri-platform-ready
+fatal-error-written

@@ -1,6 +1,7 @@
 #include "krkrvita/profile.hpp"
 
 #include "krkrvita/game.hpp"
+#include "krkrvita/vita_input_mapping.hpp"
 
 #include <fstream>
 #include <sstream>
@@ -26,22 +27,8 @@ GameProfile GameProfile::defaults(const GameDescriptor& game) {
     profile.game_id = game.fingerprint.substr(0, 16);
     profile.game_path = game.root;
     profile.display_name = game.display_name;
-    profile.input.bindings = {
-        {"cross", "mouse_left"},
-        {"circle", "mouse_right"},
-        {"square", "key_space"},
-        {"triangle", "key_escape"},
-        {"ltrigger", "key_pageup"},
-        {"rtrigger", "key_pagedown"},
-        {"dpad_up", "key_up"},
-        {"dpad_down", "key_down"},
-        {"dpad_left", "key_left"},
-        {"dpad_right", "key_right"},
-        {"start", "key_enter"},
-        {"select", "menu"},
-        {"left_stick", "mouse_cursor"},
-        {"front_touch", "mouse_absolute"},
-    };
+    profile.input.mapping_version = vita_input_mapping_version;
+    profile.input.bindings = vita_default_input_bindings();
     return profile;
 }
 
@@ -53,6 +40,10 @@ std::optional<GameProfile> GameProfile::load(const std::filesystem::path& path,
         return std::nullopt;
     }
     GameProfile profile;
+    // A profile without a version predates versioned controller mappings.
+    // Keep it identifiable as version 1 so the Vita runtime can migrate its
+    // serialized defaults instead of treating them as current overrides.
+    profile.input.mapping_version = 1;
     std::string line;
     std::size_t line_number = 0;
     try {
@@ -73,6 +64,7 @@ std::optional<GameProfile> GameProfile::load(const std::filesystem::path& path,
             else if (key == "patch_root") profile.patch_root = value;
             else if (key == "xp3_filter_path") profile.xp3_filter_path = value;
             else if (key == "filter_origin") profile.filter_origin = value;
+            else if (key == "input_mapping_version") profile.input.mapping_version = std::stoi(value);
             else if (key == "analog_deadzone") profile.input.analog_deadzone = std::stof(value);
             else if (key == "cursor_speed") profile.input.cursor_speed = std::stof(value);
             else if (key == "touch_enabled") profile.input.touch_enabled = parse_bool(value);
@@ -107,6 +99,7 @@ bool GameProfile::save(const std::filesystem::path& path, std::string* error) co
                << "patch_root=" << patch_root.string() << '\n'
                << "xp3_filter_path=" << xp3_filter_path.string() << '\n'
                << "filter_origin=" << filter_origin << '\n'
+               << "input_mapping_version=" << input.mapping_version << '\n'
                << "analog_deadzone=" << input.analog_deadzone << '\n'
                << "cursor_speed=" << input.cursor_speed << '\n'
                << "touch_enabled=" << (input.touch_enabled ? "true" : "false") << '\n';

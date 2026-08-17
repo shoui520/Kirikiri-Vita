@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <iterator>
 #include <stdexcept>
 
 namespace krkrvita {
@@ -55,7 +56,7 @@ bool verify_retail_filter(const GameDescriptor& game,
         for (const auto& archive_file : game.archives) {
             auto archive = Xp3Archive::open(archive_file.path, error);
             if (!archive) continue;
-            auto samples = collect_xp3_filter_samples(*archive, 32, &filter, error);
+            auto samples = collect_xp3_filter_samples(*archive, 12, &filter, error);
             if (samples.empty()) continue;
             for (const auto& sample : samples) {
                 const auto item_score = FilterHeuristic::score_plaintext(
@@ -64,11 +65,12 @@ bool verify_retail_filter(const GameDescriptor& game,
                 if (item_score >= 80) ++result.recognized;
             }
             result.samples += samples.size();
-            break;
         }
         if (!result.samples) throw std::runtime_error("game archives contain no filter samples");
         if (verification) *verification = result;
-        if (result.recognized < std::min<std::size_t>(2, result.samples)) {
+        const auto required = std::max<std::size_t>(
+            std::min<std::size_t>(2, result.samples), (result.samples + 2) / 3);
+        if (result.recognized < required) {
             throw std::runtime_error("xp3filter.tjs did not reveal recognizable archive data");
         }
         return true;
@@ -80,27 +82,47 @@ bool verify_retail_filter(const GameDescriptor& game,
 
 std::optional<PreparedFilter> prepare_filter_fallback(
     const GameDescriptor& game, const std::filesystem::path& generated_root,
-    std::string* error) {
+    std::string* error, bool allow_game_local) {
     try {
         const auto local = game.root / "xp3filter.tjs";
-        if (std::filesystem::is_regular_file(local)) {
+        if (allow_game_local && std::filesystem::is_regular_file(local)) {
             return PreparedFilter{local, "game-local"};
         }
 
+        std::string inference_reason;
+        bool requires_executable_analysis = false;
+        std::vector<FilterSample> aggregate_samples;
         for (const auto& archive_file : game.archives) {
             auto archive = Xp3Archive::open(archive_file.path, error);
             if (!archive) continue;
-            auto samples = collect_xp3_filter_samples(*archive, 32, nullptr, error);
+            auto samples = collect_xp3_filter_samples(*archive, 12, nullptr, error);
             if (samples.empty()) continue;
-            const auto rule = FilterHeuristic::detect(samples);
-            if (!rule) continue;
-            const auto destination = generated_root /
-                game.fingerprint.substr(0, 16) / "xp3filter.tjs";
-            write_text_atomic(destination,
-                "// Generated from archive known-plaintext analysis.\n" + rule->to_tjs());
-            return PreparedFilter{destination, "heuristic:" + rule->name()};
+            aggregate_samples.insert(aggregate_samples.end(),
+                                     std::make_move_iterator(samples.begin()),
+                                     std::make_move_iterator(samples.end()));
+            if (aggregate_samples.size() >= 96) break;
         }
-        throw std::runtime_error("no local or confidently inferred xp3filter.tjs is available");
+        if (!aggregate_samples.empty()) {
+            if (aggregate_samples.size() > 96) aggregate_samples.resize(96);
+            auto analysis = FilterHeuristic::analyze(aggregate_samples);
+            inference_reason = analysis.reason;
+            requires_executable_analysis = analysis.disposition ==
+                FilterInferenceDisposition::RequiresExecutableAnalysis;
+            if (analysis.rule) {
+                const auto& rule = *analysis.rule;
+                const auto destination = generated_root /
+                    game.fingerprint.substr(0, 16) / "xp3filter.tjs";
+                write_text_atomic(destination,
+                    "// Generated from archive known-plaintext analysis.\n" + rule.to_tjs());
+                return PreparedFilter{destination, "heuristic:" + rule.name()};
+            }
+        }
+        if (requires_executable_analysis)
+            throw std::runtime_error("phase 2 executable analysis required: " +
+                                     inference_reason);
+        throw std::runtime_error(inference_reason.empty()
+            ? "no local or confidently inferred xp3filter.tjs is available"
+            : inference_reason);
     } catch (const std::exception& exception) {
         if (error) *error = exception.what();
         return std::nullopt;

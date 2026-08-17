@@ -33,9 +33,15 @@ struct GameDescriptor {
     std::vector<GameFile> plugins;
 };
 
+enum class GameScanMode {
+    Full,
+    ArchivesOnly,
+};
+
 class GameScanner {
 public:
-    static GameDescriptor scan(const std::filesystem::path& root);
+    static GameDescriptor scan(const std::filesystem::path& root,
+                               GameScanMode mode = GameScanMode::Full);
 };
 
 std::string normalize_game_name(std::string_view utf8);

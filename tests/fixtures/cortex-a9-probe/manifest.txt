@@ -1,0 +1,2 @@
+# operation|relative_path|bytes|max_compile_us
+compile|probe.tjs|226|2000000

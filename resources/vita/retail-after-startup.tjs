@@ -1,0 +1,12 @@
+// Vita has no desktop menubar.  The target retail window creates a permanent
+// 1 ms polling timer solely to reveal and hide that Windows-only menu.
+if(System.platformName === "PlayStation Vita" &&
+	typeof System.checkAppId !== "undefined" &&
+	System.checkAppId === "c1ce5e17-e483-4195-a8f7-a019f96c6805" &&
+	typeof global.kag !== "undefined" &&
+	global.kag instanceof "KrkrzAddMainWindow" &&
+	typeof global.kag.menutimer !== "undefined")
+{
+	global.kag.menutimer.enabled = false;
+	Debug.notice("krkrvita-vita-menubar-timer-disabled");
+}
