@@ -1593,6 +1593,32 @@ void test_filter_detection() {
           "wrong filter script generated");
 }
 
+// An Ogg page carries its own checksum, and filter scoring now measures how
+// much of a decoded sample still agrees with its format. A fixture with a
+// zeroed checksum would therefore be judged as a failed decode whatever rule
+// produced it, so fill it in the way a real encoder does.
+void seal_ogg_page(std::vector<std::uint8_t>& page) {
+    page[22] = page[23] = page[24] = page[25] = 0;
+    std::uint32_t crc = 0;
+    for (const auto byte : page) {
+        crc ^= static_cast<std::uint32_t>(byte) << 24;
+        for (int bit = 0; bit < 8; ++bit)
+            crc = (crc & 0x80000000u) ? (crc << 1) ^ 0x04c11db7u : crc << 1;
+    }
+    for (int i = 0; i < 4; ++i)
+        page[22 + i] = static_cast<std::uint8_t>(crc >> (i * 8));
+}
+
+std::vector<std::uint8_t> valid_ogg_page() {
+    std::vector<std::uint8_t> ogg(32, 0);
+    std::copy_n("OggS", 4, ogg.begin());
+    ogg[4] = 0;   // stream structure version
+    ogg[26] = 1;  // one lacing value
+    ogg[27] = 4;  // describing a four-byte packet
+    seal_ogg_page(ogg);
+    return ogg;
+}
+
 std::vector<FilterSample> filter_known_plaintext_samples() {
     std::vector<std::uint8_t> png = {
         0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a,
@@ -1600,11 +1626,7 @@ std::vector<FilterSample> filter_known_plaintext_samples() {
         0, 0, 5, 0, 0, 0, 3, 0, 8, 6, 0, 0, 0,
         0, 0, 0, 0,
     };
-    std::vector<std::uint8_t> ogg(32, 0);
-    std::copy_n("OggS", 4, ogg.begin());
-    ogg[4] = 0;
-    ogg[26] = 1;
-    ogg[27] = 4;
+    std::vector<std::uint8_t> ogg = valid_ogg_page();
     std::vector<std::uint8_t> wav(32, 0);
     std::copy_n("RIFF", 4, wav.begin());
     std::copy_n("WAVEfmt ", 8, wav.begin() + 8);
@@ -1618,6 +1640,133 @@ std::vector<FilterSample> filter_known_plaintext_samples() {
         {0x73a91e62, 0, "effect.wav", std::move(wav)},
         {0x4ed819b7, 0, "validation.scn", std::move(script)},
     };
+}
+
+// A filter that changes key partway through a file is invisible to a
+// whole-file search: the transform that satisfies the format signature at
+// offset 0 explains the header and nothing else. Recovery has to notice that
+// the rest of the sample stopped making sense and solve the later regions.
+void test_segmented_filter_detection() {
+    const auto make_script = [](const char* body, std::size_t length) {
+        std::vector<std::uint8_t> script;
+        const std::string line(body);
+        while (script.size() < length)
+            script.insert(script.end(), line.begin(), line.end());
+        script.resize(length);
+        return script;
+    };
+    // A real PNG, checksums included. Scoring measures how much of a decoded
+    // sample still agrees with its format, so a fixture with broken chunk
+    // CRCs would be penalised no matter which rule decoded it.
+    std::vector<std::uint8_t> png = {
+        0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a};
+    const auto append_chunk = [&png](const char* type,
+                                     const std::vector<std::uint8_t>& data) {
+        const auto length = static_cast<std::uint32_t>(data.size());
+        for (int shift = 24; shift >= 0; shift -= 8)
+            png.push_back(static_cast<std::uint8_t>(length >> shift));
+        std::vector<std::uint8_t> covered(type, type + 4);
+        covered.insert(covered.end(), data.begin(), data.end());
+        png.insert(png.end(), covered.begin(), covered.end());
+        const auto crc = static_cast<std::uint32_t>(
+            ::crc32(::crc32(0, nullptr, 0), covered.data(),
+                    static_cast<uInt>(covered.size())));
+        for (int shift = 24; shift >= 0; shift -= 8)
+            png.push_back(static_cast<std::uint8_t>(crc >> shift));
+    };
+    append_chunk("IHDR", {0, 0, 5, 0, 0, 0, 3, 0, 8, 6, 0, 0, 0});
+    append_chunk("IDAT", std::vector<std::uint8_t>(480, 0x5a));
+    append_chunk("IEND", {});
+
+    std::vector<FilterSample> plain = {
+        {0x123456a5, 0, "image.png", png},
+        {0x51c37b09, 0, "scenario/first.ks",
+         make_script("@iscript\nkag.title = 'segment probe';\n@endscript\n", 640)},
+        {0x9e04ab13, 0, "system/Config.tjs",
+         make_script("// Config.tjs - KAG settings\nglobal.value = 1;\n", 640)},
+        {0x4ed819b7, 0, "system/MainWindow.tjs",
+         make_script("// MainWindow.tjs\nkag.onKeyDown = function(k) { };\n", 640)},
+    };
+
+    // Four 64-byte regions: XOR, subtract, XOR, then subtract for the rest.
+    // Every key is derived from the entry hash, so no two files share one.
+    constexpr std::uint64_t stride = 64;
+    const auto region = [&](FilterOperation operation, std::uint8_t multiplier,
+                            std::uint64_t index, bool last) {
+        auto rule = std::make_shared<FilterRule>(operation);
+        rule->multiplier = multiplier;
+        rule->start_offset = index * stride;
+        rule->end_offset = last ? std::numeric_limits<std::uint64_t>::max()
+                                : (index + 1) * stride;
+        return rule;
+    };
+    FilterRule encryption;
+    encryption.segments = {
+        region(FilterOperation::XorHashMultiply, 21, 0, false),
+        region(FilterOperation::SubHashMultiply, 32, 1, false),
+        region(FilterOperation::XorHashMultiply, 43, 2, false),
+        region(FilterOperation::SubHashMultiply, 54, 3, true),
+    };
+
+    // The rule decodes; encrypting is the inverse, so build the ciphertext by
+    // hand rather than by reusing apply().
+    auto samples = plain;
+    for (auto& sample : samples) {
+        for (std::size_t at = 0; at < sample.bytes.size(); ++at) {
+            const auto index = std::min<std::size_t>(at / stride, 3);
+            const std::uint8_t key = static_cast<std::uint8_t>(
+                sample.hash * (index == 0 ? 21 : index == 1 ? 32
+                                                            : index == 2 ? 43 : 54));
+            auto& byte = sample.bytes[at];
+            byte = (index % 2 == 0) ? static_cast<std::uint8_t>(byte ^ key)
+                                    : static_cast<std::uint8_t>(byte + key);
+        }
+    }
+
+    const auto analysis = FilterHeuristic::analyze(samples);
+    check(analysis.rule.has_value(),
+          "segmented filter not detected: " + analysis.reason);
+    if (!analysis.rule) return;
+    check(analysis.rule->segments.size() == 4,
+          "wrong region count: " + analysis.rule->name());
+    check(analysis.rule->segments[0]->end_offset == stride,
+          "wrong stride recovered: " + analysis.rule->name());
+    check(analysis.rule->segments[3]->end_offset ==
+              std::numeric_limits<std::uint64_t>::max(),
+          "the final region must cover the rest of the file");
+
+    // Decoding with the recovered rule has to reproduce the originals exactly,
+    // and the emitted TJS has to do the same thing inside the real filter VM.
+    Xp3FilterVm vm;
+    std::string error;
+    check(vm.load(analysis.rule->to_tjs(), &error),
+          "generated segmented filter did not compile: " + error);
+    for (std::size_t index = 0; index < samples.size(); ++index) {
+        auto native = samples[index].bytes;
+        analysis.rule->apply(samples[index].hash, 0, native,
+                             samples[index].filename);
+        check(native == plain[index].bytes,
+              "recovered segmented rule did not restore " +
+                  samples[index].filename);
+
+        auto scripted = samples[index].bytes;
+        check(vm.decode(samples[index].hash, 0, scripted,
+                        samples[index].filename, &error),
+              "generated segmented filter did not execute: " + error);
+        check(scripted == plain[index].bytes,
+              "generated segmented filter did not restore " +
+                  samples[index].filename);
+    }
+
+    // Reading a file in pieces must give the same answer as reading it whole:
+    // the region a byte belongs to comes from its absolute offset, not from
+    // where the current read happens to start.
+    auto tail = std::vector<std::uint8_t>(samples[1].bytes.begin() + 100,
+                                          samples[1].bytes.end());
+    check(vm.decode(samples[1].hash, 100, tail, samples[1].filename, &error),
+          "generated segmented filter did not execute at an offset: " + error);
+    check(std::equal(tail.begin(), tail.end(), plain[1].bytes.begin() + 100),
+          "generated segmented filter ignored the read offset");
 }
 
 void test_generalized_filter_detection() {
@@ -1697,11 +1846,7 @@ void test_generalized_filter_detection() {
             0, 0, 5, 0, 0, 0, 3, 0, 8, 6, 0, 0, 0,
             0, 0, 0, 0,
         };
-        std::vector<std::uint8_t> ogg(32, 0);
-        std::copy_n("OggS", 4, ogg.begin());
-        ogg[4] = 0;
-        ogg[26] = 1;
-        ogg[27] = 4;
+        std::vector<std::uint8_t> ogg = valid_ogg_page();
         std::vector<std::uint8_t> wav(32, 0);
         std::copy_n("RIFF", 4, wav.begin());
         std::copy_n("WAVEfmt ", 8, wav.begin() + 8);
@@ -2914,6 +3059,7 @@ int main(int argc, char** argv) {
         test_manifest_and_resolver();
         test_patch_cache_integrity();
         test_filter_detection();
+        test_segmented_filter_detection();
         test_generalized_filter_detection();
         test_yuri_filter_vm();
         test_system_app_id_compat();

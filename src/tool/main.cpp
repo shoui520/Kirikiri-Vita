@@ -435,8 +435,15 @@ int command_xp3_diagnose(const std::filesystem::path& path) {
                 std::cout << std::hex << std::setw(2) << std::setfill('0')
                           << unsigned(sample.bytes[i]);
             }
-            std::cout << std::dec << std::setfill(' ') << " name=\""
-                      << sample.filename << "\"\n";
+            std::cout << std::dec << std::setfill(' ') << " agreement=";
+            if (const auto agreement =
+                    FilterHeuristic::format_agreement(sample.filename, sample.bytes)) {
+                std::cout << std::fixed << std::setprecision(2) << *agreement
+                          << std::defaultfloat;
+            } else {
+                std::cout << "n/a";
+            }
+            std::cout << " name=\"" << sample.filename << "\"\n";
         }
     }
     return 0;

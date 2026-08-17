@@ -186,9 +186,13 @@ std::uint8_t key_for(const FilterRule& rule, std::uint32_t hash,
     case FilterOperation::XorNotHashPlus1:
         return static_cast<std::uint8_t>(~(hash + 1));
     case FilterOperation::XorConstant:
+    case FilterOperation::SubConstant:
     case FilterOperation::XorThenAdd:
     case FilterOperation::XorThenNibbleSwap:
         return rule.constant;
+    case FilterOperation::XorHashMultiply:
+    case FilterOperation::SubHashMultiply:
+        return static_cast<std::uint8_t>(hash * rule.multiplier);
     case FilterOperation::XorHashShift:
         return static_cast<std::uint8_t>(hash >> rule.shift);
     case FilterOperation::XorNotHashShift:
@@ -236,9 +240,22 @@ std::uint8_t key_for(const FilterRule& rule, std::uint32_t hash,
 void transform_byte(const FilterRule& rule, std::uint32_t hash,
                     std::uint64_t absolute_offset, std::uint8_t& byte) {
     if (absolute_offset < rule.start_offset || absolute_offset >= rule.end_offset) return;
+    if (!rule.segments.empty()) {
+        // Each segment is bounded, so applying all of them touches every byte
+        // exactly once. Ordering is irrelevant for disjoint windows and the
+        // builder never produces overlapping ones.
+        for (const auto& segment : rule.segments)
+            if (segment) transform_byte(*segment, hash, absolute_offset, byte);
+        return;
+    }
     if (rule.operation == FilterOperation::RotateLeftByPopcount) {
         const unsigned amount = std::popcount(byte) & 7u;
         if (amount) byte = static_cast<std::uint8_t>((byte << amount) | (byte >> (8 - amount)));
+        return;
+    }
+    if (rule.operation == FilterOperation::SubConstant ||
+        rule.operation == FilterOperation::SubHashMultiply) {
+        byte = static_cast<std::uint8_t>(byte - key_for(rule, hash, absolute_offset));
         return;
     }
     byte ^= key_for(rule, hash, absolute_offset);
@@ -252,6 +269,40 @@ std::string hex_byte(std::uint8_t value) {
     char buffer[8]{};
     std::snprintf(buffer, sizeof(buffer), "0x%02x", value);
     return buffer;
+}
+
+// The primitive transforms a segment may use. Deliberately small: every one
+// is a single self-contained statement over b[i], so segments compose into a
+// plain if/else chain with no per-call setup. Anything outside this set is
+// refused by the segment builder rather than emitted as approximate TJS.
+bool is_segment_primitive(FilterOperation operation) {
+    switch (operation) {
+    case FilterOperation::Identity:
+    case FilterOperation::XorConstant:
+    case FilterOperation::SubConstant:
+    case FilterOperation::XorHashMultiply:
+    case FilterOperation::SubHashMultiply:
+        return true;
+    default:
+        return false;
+    }
+}
+
+std::string segment_byte_statement(const FilterRule& rule) {
+    std::ostringstream out;
+    switch (rule.operation) {
+    case FilterOperation::Identity: break;
+    case FilterOperation::XorConstant:
+        out << "b[i]^=" << unsigned(rule.constant) << ';'; break;
+    case FilterOperation::SubConstant:
+        out << "b[i]=(b[i]-" << unsigned(rule.constant) << ")&255;"; break;
+    case FilterOperation::XorHashMultiply:
+        out << "b[i]^=(h*" << unsigned(rule.multiplier) << ")&255;"; break;
+    case FilterOperation::SubHashMultiply:
+        out << "b[i]=(b[i]-((h*" << unsigned(rule.multiplier) << ")&255))&255;"; break;
+    default: break;
+    }
+    return out.str();
 }
 
 bool matches_known(const FilterRule& rule, const std::vector<FilterSample>& samples,
@@ -383,6 +434,29 @@ std::vector<FilterRule> build_candidates(const std::vector<FilterSample>& sample
 
     FilterRule add_reverse{FilterOperation::XorNotHashPlus1};
     add_if_known(base, add_reverse, samples);
+
+    // Per-file keys derived by multiplying the XP3 entry hash. Multiplier 1 is
+    // already covered by XorHash; the rest are only reachable here. The
+    // additive variants matter because a filter that adds on write is not an
+    // involution and never shows up as a XOR that fits every known byte.
+    if (auto key = infer_constant(samples, [](const auto& sample, std::size_t at,
+                                              std::uint8_t plain) {
+            return static_cast<std::uint8_t>(sample.bytes[at] - plain);
+        }); key && *key != 0) {
+        FilterRule rule{FilterOperation::SubConstant};
+        rule.constant = *key;
+        add_if_known(base, rule, samples);
+    }
+    for (unsigned multiplier = 2; multiplier < 256; ++multiplier) {
+        FilterRule xor_rule{FilterOperation::XorHashMultiply};
+        xor_rule.multiplier = static_cast<std::uint8_t>(multiplier);
+        add_if_known(base, xor_rule, samples);
+    }
+    for (unsigned multiplier = 1; multiplier < 256; ++multiplier) {
+        FilterRule sub_rule{FilterOperation::SubHashMultiply};
+        sub_rule.multiplier = static_cast<std::uint8_t>(multiplier);
+        add_if_known(base, sub_rule, samples);
+    }
 
     for (unsigned mask = 1; mask < 16; ++mask) {
         if (std::popcount(mask) < 2) continue;
@@ -617,6 +691,22 @@ std::vector<FilterRule> build_candidates(const std::vector<FilterSample>& sample
 
 int description_cost(const FilterRule& rule) {
     int cost = 0;
+    if (!rule.segments.empty()) {
+        // A segmented rule is a larger hypothesis than any single transform
+        // and must pay for it. What it pays for is the stride and the number
+        // of regions; the individual window boundaries follow from those
+        // rather than being free parameters, so they are not charged again on
+        // top of each region's own transform.
+        cost = 4 + 2 * static_cast<int>(rule.segments.size());
+        for (const auto& segment : rule.segments) {
+            if (!segment) continue;
+            auto bare = *segment;
+            bare.start_offset = 0;
+            bare.end_offset = std::numeric_limits<std::uint64_t>::max();
+            cost += description_cost(bare);
+        }
+        return cost;
+    }
     switch (rule.operation) {
     case FilterOperation::Identity: break;
     case FilterOperation::XorHash:
@@ -638,6 +728,9 @@ int description_cost(const FilterRule& rule) {
     case FilterOperation::XorRotatingHash: cost = 5 + static_cast<int>(rule.table.size()); break;
     case FilterOperation::XorLcgHash: cost = 3; break;
     case FilterOperation::XorPeriodic: cost = 6 + static_cast<int>(rule.table.size()); break;
+    case FilterOperation::SubConstant: cost = 2; break;
+    case FilterOperation::XorHashMultiply:
+    case FilterOperation::SubHashMultiply: cost = rule.multiplier == 1 ? 1 : 3; break;
     }
     if (rule.start_offset) cost += 3;
     if (rule.end_offset != std::numeric_limits<std::uint64_t>::max()) cost += 3;
@@ -649,6 +742,7 @@ bool same_core_transform(const FilterRule& left, const FilterRule& right) {
            left.constant == right.constant &&
            left.secondary == right.secondary && left.shift == right.shift &&
            left.modulus == right.modulus && left.post_add == right.post_add &&
+           left.multiplier == right.multiplier &&
            left.seed_xor == right.seed_xor && left.table == right.table;
     if (identical_parameters) return true;
     if (left.operation != FilterOperation::XorThenAdd ||
@@ -700,6 +794,407 @@ void discard_unproven_range_variants(std::vector<FilterRule>& rules) {
     }), rules.end());
 }
 
+// --- Offset-segmented rule discovery -------------------------------------
+//
+// Some Kirikiri filters do not apply one transform to a whole file. They
+// switch after a fixed number of bytes: the classic case encrypts only a
+// header and leaves the rest alone, and the general case walks a short
+// sequence of per-region keys before settling on one for the remainder.
+//
+// A whole-file search cannot see this. It finds the transform that satisfies
+// the format signature at offset 0, scores poorly on the rest of the sample,
+// and the archive is written off as needing executable analysis.
+//
+// The recovery below is evidence-driven and fail-closed. It needs textual
+// samples, because text is the only payload whose validity can be judged byte
+// by byte at an arbitrary offset; the region key is then solved against those
+// samples and the completed rule is re-validated against every sample,
+// including the binary ones whose structure the text search never consulted.
+
+std::size_t cp932_prefix_length(std::span<const std::uint8_t> bytes) {
+    std::size_t i = 0;
+    while (i < bytes.size()) {
+        const auto lead = bytes[i];
+        if (lead == '\r' || lead == '\n' || lead == '\t' ||
+            (lead >= 0x20 && lead < 0x7f)) { ++i; continue; }
+        if (lead >= 0xa1 && lead <= 0xdf) { ++i; continue; } // half-width kana
+        if ((lead >= 0x81 && lead <= 0x9f) || (lead >= 0xe0 && lead <= 0xef)) {
+            if (i + 1 >= bytes.size()) return bytes.size();
+            const auto trail = bytes[i + 1];
+            if ((trail >= 0x40 && trail <= 0x7e) || (trail >= 0x80 && trail <= 0xfc)) {
+                i += 2;
+                continue;
+            }
+        }
+        break;
+    }
+    return i;
+}
+
+std::size_t utf8_prefix_length(std::span<const std::uint8_t> bytes) {
+    std::size_t i = 0;
+    while (i < bytes.size()) {
+        const auto lead = bytes[i];
+        if (lead == '\r' || lead == '\n' || lead == '\t' ||
+            (lead >= 0x20 && lead < 0x7f)) { ++i; continue; }
+        std::size_t width = 0;
+        if ((lead & 0xe0) == 0xc0 && (lead & 0x1f) >= 2) width = 2;
+        else if ((lead & 0xf0) == 0xe0) width = 3;
+        else if ((lead & 0xf8) == 0xf0) width = 4;
+        if (!width) break;
+        if (i + width > bytes.size()) return bytes.size(); // truncated, not wrong
+        bool valid = true;
+        for (std::size_t n = 1; n < width; ++n)
+            valid &= (bytes[i + n] & 0xc0) == 0x80;
+        if (!valid) break;
+        i += width;
+    }
+    return i;
+}
+
+std::size_t utf16le_prefix_length(std::span<const std::uint8_t> bytes) {
+    std::size_t i = 0;
+    while (i + 1 < bytes.size()) {
+        const auto high = bytes[i + 1];
+        const bool plausible = high == 0x00 ||
+            (high >= 0x30 && high <= 0x9f) || high == 0xff;
+        if (!plausible) break;
+        i += 2;
+    }
+    return i;
+}
+
+// How far into `bytes` the content remains readable text. Retail archives mix
+// CP932, UTF-8 and UTF-16LE freely, sometimes within one game, so take the
+// most favourable reading rather than assuming the encoding.
+std::size_t text_prefix_length(std::span<const std::uint8_t> bytes) {
+    if (bytes.size() >= 2 && bytes[0] == 0xff && bytes[1] == 0xfe)
+        return 2 + utf16le_prefix_length(bytes.subspan(2));
+    return std::max(cp932_prefix_length(bytes), utf8_prefix_length(bytes));
+}
+
+// Byte-range validity alone is a weak test. CP932 accepts 0xa1-0xdf outright
+// and treats most of 0x81-0xef as lead bytes, so ASCII shifted by a constant
+// lands almost entirely inside "valid" territory -- which is exactly what a
+// wrong key produces from a script. Retail scripts are a mix of ASCII syntax
+// and Japanese literals and always carry plenty of the former, so requiring
+// some ASCII separates a real decode from a plausible-looking one.
+double ascii_ratio(std::span<const std::uint8_t> bytes) {
+    if (bytes.empty()) return 0.0;
+    std::size_t ascii = 0;
+    for (const auto byte : bytes)
+        if (byte == '\r' || byte == '\n' || byte == '\t' ||
+            (byte >= 0x20 && byte < 0x7f)) ++ascii;
+    return static_cast<double>(ascii) / static_cast<double>(bytes.size());
+}
+
+constexpr double kMinimumScriptAsciiRatio = 0.25;
+
+bool is_text_extension(std::string_view filename) {
+    const auto extension = lower_extension(filename);
+    return extension == ".tjs" || extension == ".ks" || extension == ".scn" ||
+           extension == ".script" || extension == ".ini" || extension == ".csv" ||
+           extension == ".asd" || extension == ".sli" || extension == ".json" ||
+           extension == ".xml" || extension == ".txt";
+}
+
+// PNG chunk checksum: reflected, 0xedb88320, pre/post inverted.
+std::uint32_t crc32(std::span<const std::uint8_t> bytes) {
+    static const auto table = [] {
+        std::array<std::uint32_t, 256> values{};
+        for (std::uint32_t i = 0; i < 256; ++i) {
+            std::uint32_t value = i;
+            for (int bit = 0; bit < 8; ++bit)
+                value = (value & 1) ? (value >> 1) ^ 0xedb88320u : value >> 1;
+            values[i] = value;
+        }
+        return values;
+    }();
+    std::uint32_t value = 0xffffffffu;
+    for (const auto byte : bytes) value = table[(value ^ byte) & 0xff] ^ (value >> 8);
+    return value ^ 0xffffffffu;
+}
+
+// Ogg page checksum: forward, 0x04c11db7, zero seed, computed with the stored
+// checksum field treated as zero.
+std::uint32_t ogg_page_crc(std::span<const std::uint8_t> page) {
+    static const auto table = [] {
+        std::array<std::uint32_t, 256> values{};
+        for (std::uint32_t i = 0; i < 256; ++i) {
+            std::uint32_t value = i << 24;
+            for (int bit = 0; bit < 8; ++bit)
+                value = (value & 0x80000000u) ? (value << 1) ^ 0x04c11db7u : value << 1;
+            values[i] = value;
+        }
+        return values;
+    }();
+    std::uint32_t value = 0;
+    for (std::size_t i = 0; i < page.size(); ++i) {
+        const std::uint8_t byte = (i >= 22 && i < 26) ? 0 : page[i];
+        value = (value << 8) ^ table[((value >> 24) ^ byte) & 0xff];
+    }
+    return value;
+}
+
+// How much of a decoded sample actually agrees with its declared format,
+// beyond the signature bytes at the front.
+//
+// A signature is cheap to satisfy: any rule that happens to be right for the
+// first few bytes reproduces it. Checking chunk and page checksums, or how far
+// a script stays readable, is what separates a transform that decodes the file
+// from one that only decodes its header. Returns nothing when the sample
+// cannot express an opinion, so an unverifiable payload never argues against a
+// correct rule.
+std::optional<double> decoded_agreement(std::string_view filename,
+                                        std::span<const std::uint8_t> decoded) {
+    if (decoded.size() < 32) return std::nullopt;
+    const auto size = static_cast<double>(decoded.size());
+
+    if (begins(decoded, {0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a})) {
+        std::size_t at = 8;
+        while (at + 12 <= decoded.size()) {
+            // A sample is a bounded prefix of the file, so a chunk that runs
+            // past its end is the usual case for image data, not a defect.
+            const std::size_t length = read_be32(decoded, at);
+            if (at + 12 + length > decoded.size()) break; // truncated sample
+            const auto stored = read_be32(decoded, at + 8 + length);
+            if (crc32(decoded.subspan(at + 4, length + 4)) != stored)
+                return static_cast<double>(at) / size;
+            const bool end = std::equal(decoded.begin() + static_cast<std::ptrdiff_t>(at) + 4,
+                                        decoded.begin() + static_cast<std::ptrdiff_t>(at) + 8,
+                                        "IEND");
+            at += 12 + length;
+            if (end) break;
+        }
+        return 1.0;
+    }
+
+    if (begins(decoded, {'O', 'g', 'g', 'S'})) {
+        std::size_t at = 0;
+        while (at + 27 <= decoded.size()) {
+            if (!std::equal(decoded.begin() + static_cast<std::ptrdiff_t>(at),
+                            decoded.begin() + static_cast<std::ptrdiff_t>(at) + 4, "OggS"))
+                return static_cast<double>(at) / size;
+            const std::size_t segments = decoded[at + 26];
+            if (at + 27 + segments > decoded.size()) break;
+            std::size_t body = 0;
+            for (std::size_t i = 0; i < segments; ++i) body += decoded[at + 27 + i];
+            const auto total = 27 + segments + body;
+            if (at + total > decoded.size()) break; // truncated sample
+            if (ogg_page_crc(decoded.subspan(at, total)) !=
+                read_le32(decoded, at + 22))
+                return static_cast<double>(at) / size;
+            at += total;
+        }
+        return 1.0;
+    }
+
+    if (!is_text_extension(filename)) return std::nullopt;
+    // A textual extension routinely carries compiled or compressed script
+    // containers. Those are binary by design and say nothing about the rule.
+    if (begins(decoded, {'T', 'J', 'S', '2', '1', '0', '0', 0}) ||
+        begins(decoded, {0xfe, 0xfe, 0x00}) || begins(decoded, {0xfe, 0xfe, 0x01}) ||
+        begins(decoded, {0xfe, 0xfe, 0x02})) return std::nullopt;
+    const auto readable = text_prefix_length(decoded);
+    // Only a payload that begins as readable text is making a claim this can
+    // check. A textual extension over binary content is common enough in
+    // retail archives that judging it would reject correct rules.
+    if (readable < 32) return std::nullopt;
+    return static_cast<double>(readable) / size;
+}
+
+// Penalty in the same units as score_plaintext. A rule that leaves most of a
+// verifiable sample unexplained must not outrank one that decodes all of it.
+int decode_disagreement_penalty(std::string_view filename,
+                                std::span<const std::uint8_t> decoded) {
+    const auto agreement = decoded_agreement(filename, decoded);
+    if (!agreement) return 0;
+    const auto missing = 1.0 - std::clamp(*agreement, 0.0, 1.0);
+    return static_cast<int>(missing * 200.0);
+}
+
+// Every transform a segment may carry. See is_segment_primitive().
+std::vector<FilterRule> segment_primitives() {
+    std::vector<FilterRule> primitives;
+    primitives.emplace_back(FilterOperation::Identity);
+    for (unsigned value = 1; value < 256; ++value) {
+        FilterRule xor_rule{FilterOperation::XorConstant};
+        xor_rule.constant = static_cast<std::uint8_t>(value);
+        primitives.push_back(std::move(xor_rule));
+        FilterRule sub_rule{FilterOperation::SubConstant};
+        sub_rule.constant = static_cast<std::uint8_t>(value);
+        primitives.push_back(std::move(sub_rule));
+    }
+    for (unsigned multiplier = 1; multiplier < 256; ++multiplier) {
+        FilterRule xor_rule{FilterOperation::XorHashMultiply};
+        xor_rule.multiplier = static_cast<std::uint8_t>(multiplier);
+        primitives.push_back(std::move(xor_rule));
+        FilterRule sub_rule{FilterOperation::SubHashMultiply};
+        sub_rule.multiplier = static_cast<std::uint8_t>(multiplier);
+        primitives.push_back(std::move(sub_rule));
+    }
+    return primitives;
+}
+
+bool same_segment_transform(const FilterRule& left, const FilterRule& right) {
+    if (left.operation != right.operation) return false;
+    return left.constant == right.constant && left.multiplier == right.multiplier;
+}
+
+// Longest textual prefix produced by decoding `sample` with `rule`. The search
+// below only ever asks about the region it is currently solving, so decoding
+// stops at `limit` instead of walking the whole sample every time.
+std::size_t decoded_text_length(const FilterRule& rule, const FilterSample& sample,
+                                std::size_t limit = std::numeric_limits<std::size_t>::max()) {
+    std::vector<std::uint8_t> decoded(
+        sample.bytes.begin(),
+        sample.bytes.begin() + static_cast<std::ptrdiff_t>(
+            std::min(limit, sample.bytes.size())));
+    rule.apply(sample.hash, sample.offset, decoded, sample.filename);
+    return text_prefix_length(decoded);
+}
+
+constexpr std::size_t kMaxSegments = 8;
+constexpr std::size_t kMinimumStride = 16;
+constexpr std::size_t kStrideSearchWindow = 256;
+
+std::optional<FilterRule> discover_segments(const std::vector<FilterSample>& samples,
+                                            const FilterRule& base) {
+    if (!is_segment_primitive(base.operation) || !is_unbounded(base)) return std::nullopt;
+
+    // Textual samples that the base rule already decodes correctly at the
+    // start. Anything else cannot tell us where the first region ends.
+    std::vector<const FilterSample*> probes;
+    for (const auto& sample : samples) {
+        if (!is_text_extension(sample.filename)) continue;
+        if (sample.offset != 0) continue;
+        const auto readable = decoded_text_length(base, sample);
+        if (readable >= 32 && readable < sample.bytes.size()) probes.push_back(&sample);
+    }
+    if (probes.size() < 2) return std::nullopt;
+
+    std::size_t stride_hint = std::numeric_limits<std::size_t>::max();
+    for (const auto* probe : probes)
+        stride_hint = std::min(stride_hint, decoded_text_length(base, *probe));
+    if (stride_hint < kMinimumStride) return std::nullopt;
+
+    const auto primitives = segment_primitives();
+    const std::size_t floor_stride =
+        stride_hint > kStrideSearchWindow + kMinimumStride
+            ? stride_hint - kStrideSearchWindow : kMinimumStride;
+
+    for (std::size_t stride = stride_hint; stride >= floor_stride; --stride) {
+        std::vector<std::shared_ptr<FilterRule>> segments;
+        auto head = std::make_shared<FilterRule>(base);
+        head->end_offset = stride;
+        segments.push_back(head);
+
+        bool converged = false;
+        bool failed = false;
+        for (std::size_t index = 1; index < kMaxSegments && !converged; ++index) {
+            const auto window_start = stride * index;
+            const auto window_end = window_start + stride;
+            // Stop extending once no probe still has bytes to constrain the
+            // window; an unterminated sequence is rejected below.
+            const bool constrained = std::any_of(
+                probes.begin(), probes.end(), [&](const auto* probe) {
+                    return probe->bytes.size() >= window_end;
+                });
+            if (!constrained) { failed = true; break; }
+
+            // Rank surviving transforms by how much like script the region
+            // reads, not merely by whether its bytes fall in valid ranges.
+            // ASCII shifted by a wrong key stays "valid" CP932 while carrying
+            // almost no ASCII, so the true transform stands well clear.
+            const FilterRule* solved = nullptr;
+            int solved_cost = std::numeric_limits<int>::max();
+            double best_ratio = -1.0;
+            for (const auto& candidate : primitives) {
+                auto trial = candidate;
+                trial.start_offset = window_start;
+                trial.end_offset = window_end;
+                FilterRule composed;
+                composed.segments = segments;
+                composed.segments.push_back(std::make_shared<FilterRule>(trial));
+                bool all_valid = true;
+                double ratio_total = 0.0;
+                std::size_t rated = 0;
+                for (const auto* probe : probes) {
+                    const auto required = std::min(window_end, probe->bytes.size());
+                    if (required <= window_start) continue;
+                    if (decoded_text_length(composed, *probe, required) < required) {
+                        all_valid = false;
+                        break;
+                    }
+                    std::vector<std::uint8_t> window(
+                        probe->bytes.begin() +
+                            static_cast<std::ptrdiff_t>(window_start),
+                        probe->bytes.begin() +
+                            static_cast<std::ptrdiff_t>(required));
+                    composed.apply(probe->hash, probe->offset + window_start,
+                                   window, probe->filename);
+                    ratio_total += ascii_ratio(window);
+                    ++rated;
+                }
+                if (!all_valid || !rated) continue;
+                const auto ratio = ratio_total / static_cast<double>(rated);
+                const auto cost = description_cost(trial);
+                // Treat near-equal readability as a tie and let the simpler
+                // transform win, so an accidental fractional edge cannot
+                // select a more complicated rule.
+                if (ratio > best_ratio + 0.02 ||
+                    (ratio > best_ratio - 0.02 && cost < solved_cost)) {
+                    best_ratio = std::max(best_ratio, ratio);
+                    solved_cost = cost;
+                    solved = &candidate;
+                }
+            }
+            if (!solved || best_ratio < kMinimumScriptAsciiRatio) {
+                failed = true;
+                break;
+            }
+
+            // A region that repeats the previous transform means the filter
+            // has settled: the previous segment covers the rest of the file.
+            if (same_segment_transform(*solved, *segments.back())) {
+                segments.back() = std::make_shared<FilterRule>(*segments.back());
+                segments.back()->end_offset = std::numeric_limits<std::uint64_t>::max();
+                converged = true;
+                break;
+            }
+            auto next = std::make_shared<FilterRule>(*solved);
+            next->start_offset = window_start;
+            next->end_offset = window_end;
+            segments.push_back(std::move(next));
+        }
+        if (failed || !converged || segments.size() < 2) continue;
+
+        FilterRule composed;
+        composed.segments = std::move(segments);
+
+        // The per-region search only ever looked as far as the region it was
+        // solving, and a region boundary that is close but wrong can survive
+        // that. Require the finished rule to decode each probe from the first
+        // byte to the last, as readable script rather than merely as bytes in
+        // valid ranges. A stride that is off by even one fails here, and the
+        // loop moves on to the next one.
+        bool complete = true;
+        for (const auto* probe : probes) {
+            const auto readable = decoded_text_length(composed, *probe);
+            if (readable < probe->bytes.size()) { complete = false; break; }
+            auto decoded = probe->bytes;
+            composed.apply(probe->hash, probe->offset, decoded, probe->filename);
+            if (ascii_ratio(decoded) < kMinimumScriptAsciiRatio) {
+                complete = false;
+                break;
+            }
+        }
+        if (!complete) continue;
+        return composed;
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 std::string FilterRule::name() const {
@@ -717,6 +1212,16 @@ std::string FilterRule::name() const {
             compound << '_' << (branch.rule ? branch.rule->name() : "identity");
         }
         return compound.str();
+    }
+    if (!segments.empty()) {
+        std::ostringstream composed;
+        composed << "segmented";
+        for (const auto& segment : segments) {
+            composed << '_';
+            if (!segment) { composed << "identity"; continue; }
+            composed << segment->name();
+        }
+        return composed.str();
     }
     std::ostringstream out;
     switch (operation) {
@@ -750,6 +1255,11 @@ std::string FilterRule::name() const {
     case FilterOperation::XorThenNibbleSwap:
         out << "xor_" << hex_byte(constant) << "_nibble_swap"; break;
     case FilterOperation::RotateLeftByPopcount: out << "rotate_left_by_popcount"; break;
+    case FilterOperation::SubConstant: out << "sub_constant_" << hex_byte(constant); break;
+    case FilterOperation::XorHashMultiply:
+        out << "xor_hash_times_" << unsigned(multiplier); break;
+    case FilterOperation::SubHashMultiply:
+        out << "sub_hash_times_" << unsigned(multiplier); break;
     }
     if (start_offset) out << "_from_" << start_offset;
     if (end_offset != std::numeric_limits<std::uint64_t>::max()) out << "_to_" << end_offset;
@@ -800,6 +1310,27 @@ std::string FilterRule::to_tjs() const {
         }
         compound << "});\n";
         return compound.str();
+    }
+    if (!segments.empty()) {
+        std::ostringstream composed;
+        composed << "Storages.setXP3ArchiveExtractionFilter(function(h,o,b,l){"
+                 << "for(var i=0;i<l;++i){var p=o+i;";
+        bool first = true;
+        for (const auto& segment : segments) {
+            if (!segment) continue;
+            const auto statement = segment_byte_statement(*segment);
+            const bool bounded =
+                segment->end_offset != std::numeric_limits<std::uint64_t>::max();
+            if (bounded) {
+                composed << (first ? "if(" : "else if(") << "p<" << segment->end_offset
+                         << "){" << statement << '}';
+            } else {
+                composed << (first ? "{" : "else{") << statement << '}';
+            }
+            first = false;
+        }
+        composed << "}});\n";
+        return composed.str();
     }
     if (operation == FilterOperation::Identity) {
         return "Storages.setXP3ArchiveExtractionFilter(function(h,o,b,l){});\n";
@@ -880,6 +1411,10 @@ std::string FilterRule::to_tjs() const {
         out << "b[i]^=" << unsigned(constant) << ";b[i]=(b[i]>>>4)|(b[i]<<4);"; break;
     case FilterOperation::RotateLeftByPopcount:
         out << "var c=b[i],n=c,r=0;while(n){r+=n&1;n>>>=1;}r&=7;if(r)b[i]=(c<<r)|(c>>>(8-r));"; break;
+    case FilterOperation::SubConstant:
+    case FilterOperation::XorHashMultiply:
+    case FilterOperation::SubHashMultiply:
+        out << segment_byte_statement(*this); break;
     case FilterOperation::Identity: break;
     }
     out << "}});\n";
@@ -1029,7 +1564,8 @@ FilterInferenceResult FilterHeuristic::analyze(const std::vector<FilterSample>& 
         int raw_score = 0;
         std::size_t raw_recognized = 0;
         for (const auto& sample : subset) {
-            const auto score = FilterHeuristic::score_plaintext(sample.filename, sample.bytes);
+            const auto score = FilterHeuristic::score_plaintext(sample.filename, sample.bytes) -
+                decode_disagreement_penalty(sample.filename, sample.bytes);
             raw_score += score;
             if (score >= 80) ++raw_recognized;
         }
@@ -1048,17 +1584,40 @@ FilterInferenceResult FilterHeuristic::analyze(const std::vector<FilterSample>& 
 
         auto rules = build_candidates(subset);
         discard_unproven_range_variants(rules);
+        // The disagreement penalty settles which *complete* rule wins, but it
+        // deliberately punishes a transform that only explains a file's head --
+        // which is exactly the transform a segmented filter's first region is.
+        // Keep the unpenalised ranking too, so segment discovery below starts
+        // from the head transforms rather than from whatever scored best once
+        // they were pushed down.
+        std::vector<std::pair<int, const FilterRule*>> by_signature_score;
+        by_signature_score.reserve(rules.size());
         for (auto& rule : rules) {
             int recognized = 0;
+            int unpenalised = 0;
             for (const auto& sample : subset) {
                 auto decoded = sample.bytes;
                 rule.apply(sample.hash, sample.offset, decoded, sample.filename);
                 const auto score = FilterHeuristic::score_plaintext(sample.filename, decoded);
-                rule.score += score;
+                unpenalised += score;
+                rule.score += score - decode_disagreement_penalty(sample.filename, decoded);
                 if (score >= 80) ++recognized;
             }
             if (subset.size() >= 2 && recognized < 2) rule.score -= 160;
             rule.score -= description_cost(rule) * 10;
+            by_signature_score.emplace_back(unpenalised - description_cost(rule) * 10,
+                                            &rule);
+        }
+        std::stable_sort(by_signature_score.begin(), by_signature_score.end(),
+                         [](const auto& a, const auto& b) {
+                             return a.first > b.first;
+                         });
+        std::vector<FilterRule> segment_seeds;
+        for (const auto& [score, rule] : by_signature_score) {
+            if (segment_seeds.size() >= 6) break;
+            if (!is_unbounded(*rule) || !is_segment_primitive(rule->operation))
+                continue;
+            segment_seeds.push_back(*rule);
         }
         std::sort(rules.begin(), rules.end(), [](const auto& a, const auto& b) {
             if (a.score != b.score) return a.score > b.score;
@@ -1086,6 +1645,45 @@ FilterInferenceResult FilterHeuristic::analyze(const std::vector<FilterSample>& 
                 result.disposition = FilterInferenceDisposition::Detected;
                 result.reason = "archive-known plaintext uniquely validates a synthesized rule";
                 result.rule = std::move(rules[0]);
+                return result;
+            }
+        }
+
+        // No single whole-file transform explains the archive. Before writing
+        // that off as needing the executable, test whether the filter simply
+        // changes key partway through the file. The head transform is one of
+        // the candidates already proven against every known signature byte.
+        {
+            const int minimum = static_cast<int>(subset.size()) * 65;
+            const auto required_margin =
+                subset.size() == 1 ? 30 : static_cast<int>(subset.size()) * 10;
+            for (const auto& seed : segment_seeds) {
+                auto segmented = discover_segments(subset, seed);
+                if (!segmented) continue;
+                int score = 0;
+                std::size_t recognized = 0;
+                for (const auto& sample : subset) {
+                    auto decoded = sample.bytes;
+                    segmented->apply(sample.hash, sample.offset, decoded, sample.filename);
+                    const auto sample_score =
+                        FilterHeuristic::score_plaintext(sample.filename, decoded);
+                    score += sample_score -
+                        decode_disagreement_penalty(sample.filename, decoded);
+                    if (sample_score >= 80) ++recognized;
+                }
+                segmented->score = score - description_cost(*segmented) * 10;
+                // The segmented hypothesis is larger than everything it beat,
+                // so it has to win outright rather than merely tie.
+                segmented->confidence =
+                    segmented->score - (rules.empty() ? 0 : rules[0].score);
+                if (recognized < std::max<std::size_t>(2, (subset.size() * 3 + 3) / 4))
+                    continue;
+                if (segmented->score < minimum || segmented->confidence < required_margin)
+                    continue;
+                result.disposition = FilterInferenceDisposition::Detected;
+                result.reason = "archive samples validate a rule whose key changes at a "
+                                "fixed offset stride";
+                result.rule = std::move(*segmented);
                 return result;
             }
         }
@@ -1177,6 +1775,11 @@ FilterInferenceResult FilterHeuristic::analyze(const std::vector<FilterSample>& 
         path_groups[top_directory(sample.filename)].push_back(sample);
     if (auto compound = try_partition(path_groups, true)) return *compound;
     return result;
+}
+
+std::optional<double> FilterHeuristic::format_agreement(
+    std::string_view filename, std::span<const std::uint8_t> bytes) {
+    return decoded_agreement(filename, bytes);
 }
 
 std::optional<FilterRule>
