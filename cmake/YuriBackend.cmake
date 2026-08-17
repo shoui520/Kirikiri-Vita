@@ -5080,6 +5080,15 @@ static void TVPInitRippleTransformFuncs()
         "${CMAKE_CURRENT_SOURCE_DIR}/third_party/scriptsEx/scriptsEx.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/retail/yuri_scriptsex_module.cpp")
 
+    # layerExBTOA is likewise the portable upstream implementation, vendored in
+    # third_party/layerExBTOA. It attaches to Kirikiri's built-in Layer class
+    # and computes real alpha/province pixels; the companion module only
+    # records the boot trace. Titles link it without a try/catch, so an absent
+    # module ends the boot rather than costing an optional effect.
+    list(APPEND yuri_plugin_sources
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/layerExBTOA/layerExBTOA.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/retail/yuri_layerexbtoa_module.cpp")
+
     # The debloated Yuri Android binary used as the compatibility oracle ships
     # layerExSave even though Yuri's public source tree omits it. Import the
     # original backend implementation needed by this game's screenshot/save

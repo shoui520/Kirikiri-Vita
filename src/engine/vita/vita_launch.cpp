@@ -486,6 +486,31 @@ bool krkrvita_launch_error_reported()
 	return launch_error_reported;
 }
 
+// Kirikiri engine options whose value on Vita is fixed by construction, not by
+// preference.
+//
+// System.getArgument reads the engine's option table, so an option nobody set
+// reads back as void. Games act on that: the near-universal startup idiom is
+//
+//   with(System) {
+//     if (.getArgument("-debugwin") != "no") {
+//       .shellExecute(Storages.getLocalName(.exeName), "-debugwin=no");
+//       .exit();
+//     }
+//   }
+//
+// which on Windows costs one extra process start, and on Vita ends the boot --
+// a Vita application cannot relaunch itself, so the exit() is final and the
+// title screen is never reached. Reporting what this engine actually does is
+// both the faithful answer and the one that lets the script continue.
+//
+// Only options this build genuinely settles belong here. Anything a player or
+// a title might legitimately want to choose does not.
+void append_platform_fixed_options()
+{
+	launch_arguments.push_back("-debugwin=no"); // Vita has no debug window
+}
+
 void krkrvita_resolve_launch(int &argc, char **&argv)
 {
 	if(has_explicit_project(argc, argv)) return;
@@ -504,6 +529,7 @@ void krkrvita_resolve_launch(int &argc, char **&argv)
 			return;
 		}
 		launch_arguments.push_back(argc > 0 && argv[0] ? argv[0] : "app0:eboot.bin");
+		append_platform_fixed_options();
 		append_retail_patch_arguments(fallback_game);
 		launch_arguments.push_back(fallback_game);
 	}
@@ -518,6 +544,7 @@ void krkrvita_resolve_launch(int &argc, char **&argv)
 		}
 
 		launch_arguments.push_back(argc > 0 && argv[0] ? argv[0] : "app0:eboot.bin");
+		append_platform_fixed_options();
 		const std::map<std::string, std::string>::const_iterator filter_mode =
 			values.find("filter_mode");
 		const bool force_phase1_filter = filter_mode != values.end() &&

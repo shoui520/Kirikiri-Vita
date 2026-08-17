@@ -1414,6 +1414,32 @@ require_text("${COMPILE_COMMANDS}"
 require_text("${COMPILE_COMMANDS}"
     "src/engine/retail/yuri_scriptsex_module.cpp"
     "the scriptsEx boot trace is compiled into the Vita backend")
+# layerExBTOA is likewise the vendored upstream implementation. Titles link it
+# without a try/catch, so a link-only stub would clear the boot and then hand
+# back sprites with no transparency -- require the real pixel work.
+require_text("${SOURCE_DIR}/third_party/layerExBTOA/layerExBTOA.cpp"
+    "NCB_ATTACH_FUNCTION(copyRightBlueToLeftAlpha, Layer, copyRightBlueToLeftAlpha)"
+    "layerExBTOA attaches its namesake method to Kirikiri's built-in Layer class")
+require_text("${SOURCE_DIR}/third_party/layerExBTOA/layerExBTOA.cpp"
+    "NCB_ATTACH_FUNCTION(copyAlphaToProvince, Layer, copyAlphaToProvince)"
+    "layerExBTOA registers the province transfers used for hit testing")
+require_text("${SOURCE_DIR}/src/engine/retail/yuri_layerexbtoa_module.cpp"
+    "retail-layerexbtoa-surface-ready"
+    "layerExBTOA registration is observable on hardware")
+require_text("${COMPILE_COMMANDS}"
+    "third_party/layerExBTOA/layerExBTOA.cpp"
+    "the upstream layerExBTOA implementation is compiled into the Vita backend")
+require_text("${COMPILE_COMMANDS}"
+    "src/engine/retail/yuri_layerexbtoa_module.cpp"
+    "the layerExBTOA boot trace is compiled into the Vita backend")
+# Kirikiri's -debugwin relaunch idiom ends the boot on a platform that cannot
+# restart itself, so the options this build settles must actually be seeded.
+require_text("${SOURCE_DIR}/src/engine/vita/vita_launch.cpp"
+    "launch_arguments.push_back(\"-debugwin=no\")"
+    "the engine reports the debug window it does not have")
+require_text("${SOURCE_DIR}/src/engine/vita/vita_launch.cpp"
+    "append_platform_fixed_options()"
+    "platform-fixed options are seeded on both launch paths")
 require_text("${SOURCE_DIR}/src/engine/retail/yuri_layerexsave_probe.cpp"
     "retail-layerexsave-ready"
     "the sample's layerExSave registration is observable on hardware")

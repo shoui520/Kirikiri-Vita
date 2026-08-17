@@ -35,6 +35,7 @@
     X("krflash.dll")                                \
     X("gfxeffect.dll")                              \
     X("layerexdraw.dll")                            \
+    X("layerexbtoa.dll")                            \
     X("scriptsex.dll")                              \
     X("layerexsave.dll")                            \
     X("layereximage.dll")                           \
@@ -95,8 +96,11 @@ inline constexpr auto yuri_plugin_surface_contracts = std::array{
         "layerexraster.dll", {"raster.", "layerexraster", "raster_", ""}},
     YuriPluginSurfaceContract{
         "layerexdraw.dll", {"layer.drawimage", "drawimageaffine", "drawimagestretch", "gdiplus.image"}},
+    // layerExBTOA attaches to Layer rather than exposing a namespace of its
+    // own, so its script-visible family is the method names themselves.
     YuriPluginSurfaceContract{
-        "layerexbtoa.dll", {"layerexbtoa.", "layerexbtoa_", "btoa.", ""}},
+        "layerexbtoa.dll", {"copyrightbluetoleftalpha", "copybottombluetotopalpha",
+                            "copyalphatoprovince", "fillbyprovince"}},
     YuriPluginSurfaceContract{
         "layerexsubimage.dll", {"subimage.", "layerexsubimage_", "subimage_", ""}},
     YuriPluginSurfaceContract{
