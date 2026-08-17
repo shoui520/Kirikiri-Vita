@@ -569,6 +569,7 @@ target_compile_options(krkrvita-yuri-tjs PRIVATE
 )
 
 set(KRKRVITA_COMMON_SOURCES
+    src/common/ajpm.cpp
     src/common/bubble.cpp
     src/common/filter_heuristic.cpp
     src/common/game.cpp
@@ -1000,6 +1001,14 @@ else()
         target_link_libraries(krkrvita-psb-test PRIVATE
             krkrvita-common SQLite::SQLite3)
         add_test(NAME krkrvita-psb COMMAND krkrvita-psb-test)
+
+        # AJPM is AlphaMovie.dll's undocumented container. Synthetic fixtures
+        # pin the structural contract and the fail-closed paths; the installed
+        # Violated Hero III archive, when present, walks every shipped frame.
+        add_executable(krkrvita-ajpm-test tests/test_ajpm.cpp)
+        target_link_libraries(krkrvita-ajpm-test PRIVATE
+            krkrvita-common ZLIB::ZLIB)
+        add_test(NAME krkrvita-ajpm COMMAND krkrvita-ajpm-test)
 
         # Compile the exact sqlite3.dll adapter used by Vita against Yuri's
         # real TJS VM.  This pins the official KiriKiri statement API rather
