@@ -895,6 +895,19 @@ else()
                             "${krkrvita_retail_recognized}"
                             "${krkrvita_retail_samples}"
                             "${krkrvita_retail_diagnostic}")
+                elseif(krkrvita_retail_expectation STREQUAL "hardware_blocked")
+                    # The host audit must keep passing; the actual blocker is
+                    # recorded in tests/retail_hardware_evidence.txt and is only
+                    # observable on the device.
+                    set(krkrvita_retail_test_name
+                        "krkrvita-retail-hardware-blocked-${krkrvita_retail_id}")
+                    add_test(NAME "${krkrvita_retail_test_name}"
+                        COMMAND krkrvita-retail-compatibility --game
+                            "${krkrvita_retail_path}"
+                            "${krkrvita_retail_fingerprint}"
+                            "${krkrvita_retail_rule}"
+                            "${krkrvita_retail_recognized}"
+                            "${krkrvita_retail_samples}")
                 elseif(krkrvita_retail_expectation STREQUAL "phase2")
                     set(krkrvita_retail_test_name
                         "krkrvita-retail-phase2-${krkrvita_retail_id}")
@@ -1014,6 +1027,53 @@ else()
             krkrvita-yuri-tjs krkrvita-sqlite)
         add_test(NAME krkrvita-yuri-sqlite-module
             COMMAND krkrvita-yuri-sqlite-module-test)
+
+        # Docs, the executable manifest, and physical-Vita receipts must agree.
+        # A blocked hardware receipt outranks every host result, so this test
+        # is what stops a title being described as compatible while the device
+        # says otherwise.
+        add_test(NAME krkrvita-compatibility-claims
+            COMMAND "${CMAKE_COMMAND}"
+                -DMANIFEST=${CMAKE_CURRENT_SOURCE_DIR}/tests/retail_compatibility_manifest.txt
+                -DEVIDENCE=${CMAKE_CURRENT_SOURCE_DIR}/tests/retail_hardware_evidence.txt
+                -DGATE_DOC=${CMAKE_CURRENT_SOURCE_DIR}/docs/RETAIL-COMPATIBILITY-GATE.md
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyCompatibilityClaims.cmake")
+        set_tests_properties(krkrvita-compatibility-claims
+            PROPERTIES LABELS "compatibility")
+
+        # Vita seals plugin loading, so Plugins.link() succeeds only when a
+        # module is present in the ncbAutoRegister registry. Compiling the
+        # fallback source and finding its marker string in the ELF proves
+        # neither registration nor that the surface literal executes. Drive the
+        # real registry and the real TJS VM instead.
+        add_executable(krkrvita-yuri-plugin-registry-test
+            tests/test_yuri_plugin_registry.cpp
+            src/engine/retail/yuri_motionplayer_module.cpp
+            src/engine/retail/yuri_layerexdraw_module.cpp
+            third_party/scriptsEx/scriptsEx.cpp
+            src/engine/retail/yuri_scriptsex_module.cpp
+            vendor/yuri/src/core/utils/md5.c
+            vendor/yuri/src/plugins/ncbind/ncbind.cpp)
+        target_include_directories(krkrvita-yuri-plugin-registry-test
+            BEFORE PRIVATE
+            include
+            src/yuri/compat
+            vendor/yuri/src/core/base
+            vendor/yuri/src/core/base/win32
+            vendor/yuri/src/core/environ
+            vendor/yuri/src/core/msg
+            vendor/yuri/src/core/msg/win32
+            vendor/yuri/src/core/tjs2
+            vendor/yuri/src/core/utils
+            vendor/yuri/src/core/utils/win32
+            vendor/yuri/src/plugins)
+        target_compile_options(krkrvita-yuri-plugin-registry-test PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:-include${CMAKE_CURRENT_SOURCE_DIR}/src/yuri/tjs_compat.hpp>
+            -Wno-deprecated-declarations)
+        target_link_libraries(krkrvita-yuri-plugin-registry-test PRIVATE
+            krkrvita-yuri-tjs)
+        add_test(NAME krkrvita-yuri-plugin-registry
+            COMMAND krkrvita-yuri-plugin-registry-test)
 
         # saveStruct emits quoted dictionary strings one code unit at a time.
         # The Vita plugin aggregates those writes into a fixed buffer; pin the

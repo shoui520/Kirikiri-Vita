@@ -1,4 +1,15 @@
 # id|game_path|fingerprint|expectation|phase1_rule|recognized|samples|expected_diagnostic
+#
+# expectation:
+#   phase1           - the strict host capability audit must pass. This is a
+#                      host result only; it is not evidence the title runs.
+#   runtime_blocked  - the audit reproduces an exact first unsupported runtime
+#                      diagnostic (a passing negative regression).
+#   phase2           - the pinned executable-analysis diagnosis must reproduce.
+#   hardware_blocked - the host audit passes, but tests/retail_hardware_evidence.txt
+#                      records a failed physical-Vita run. Fail-closed: the row
+#                      needs a matching "blocked" receipt, and the title may not
+#                      be called compatible until a passing receipt replaces it.
 seishoku|/home/shoui/Agents/CodexMax/色情教団|44bb539bf9510882b2fe2a5617614a3174e06ec7b2f1ae529251344aacd6bad8|phase1|xor_hash|36|36|-
 chichimiko|/mnt/j/rapapuru/chichimiko|0369a408df5ed55476b4b483a8658e443dd206290aba993ccf388c03b3ba7713|phase1|identity|96|96|-
 swap_re|/mnt/j/ORCSOFT/swap_re|069e9b7149a55646871b98b1bf03c76db82bb525ef89bfa18493fe1565dc9665|phase1|xor_hash_rshift_3|33|36|-
@@ -12,7 +23,7 @@ deepone|/mnt/j/Nameless/DeepOne|94c234faeea8f70712232bbac4d56a40bfec68505268aa78
 lpk30008|/mnt/j/lilith/LPK-30008|7cfb2fb0d9d1265121402648520db6029ec99f541bc549955ff10c1f5099df47|phase1|identity|12|12|-
 torikago|/mnt/j/Kalmia8/鳥籠のマリアージュ|ca99d8b959175bbbcfedf5429eb423c8ffbe3d0d6090446b384afdc612ddcea8|phase1|identity|49|50|-
 nobleworks|/mnt/j/YuzuSoft/のーぶる☆わーくす|611350d92f7dcdbde9d1cb01eaf797fb5567cf2156649b125fe59cac36032e03|phase1|identity|96|96|-
-sharin|/mnt/j/車輪の国、向日葵の少女|a939bec2469c5b1d194c286346bd945376a5787c95ca8b2db96c3ba0621f86e2|phase1|identity|72|72|-
+sharin|/mnt/j/車輪の国、向日葵の少女|a939bec2469c5b1d194c286346bd945376a5787c95ca8b2db96c3ba0621f86e2|hardware_blocked|identity|72|72|-
 taimakenshi|/mnt/j/miel/taimakenshi|50d2bee1c3f757717dc22dcb73c26dd07aa5f7bd545f5be7aab13570c2df0363|phase1|identity|12|12|-
 lucifer|/mnt/j/miel/傲慢巨乳魔王ルシファー、追放された底辺召喚士の絶対服従孕ませ使い魔に堕ちる|65c1151744fa4d29a1577f7f041fca9cdcb45ac18741e2cc02e6ed59c50fc06f|phase1|identity|12|12|-
 oujo_wkishi|/mnt/j/Pinpoint/王女＆女騎士Ｗド下品露出|9c6ffb9a322aab4ebd2f4abbf25b105f2c85199c86aaf9f8aeac9f8f78ca8b37|phase1|identity|12|12|-

@@ -27,6 +27,7 @@
 #include "krkrvita/text_prefix_width.hpp"
 #include "krkrvita/touch_mapping.hpp"
 #include "krkrvita/vita_bitmap_allocator.hpp"
+#include "krkrvita/vita_executable_name.hpp"
 #include "krkrvita/vita_memory_budget.hpp"
 #include "krkrvita/vita_render_surface.hpp"
 #include "krkrvita/vita_storage_path.hpp"
@@ -1141,20 +1142,61 @@ void test_deferred_recycle_fixed_point() {
           "empty deferred recycler did not terminate after one stable probe");
 }
 
+void test_vita_executable_name_contract() {
+    // The real layout of "ダメダメなボクに舞い降りた全肯定ママ女神": two
+    // executables, and only the engine one is paired with a .cf. Its
+    // script/first.ks exits unless chopStorageExt(System.exeName) + ".cf"
+    // resolves, so picking the tool here is a refusal to boot.
+    const std::vector<std::u16string> allokmama = {
+        u"allokmama.cf",   u"allokmama.exe", u"bgm.xp3",
+        u"data.xp3",       u"krmovie.dll",   u"xp3dec.tpm",
+        u"ファイル破損チェックツール.exe",
+        u"ファイル破損チェックツール.ini"};
+    check(vita_select_executable_name(allokmama) == u"allokmama.exe",
+          "the .cf sibling did not identify the game executable");
+
+    // A single executable is unambiguous even with no config file.
+    check(vita_select_executable_name({u"data.xp3", u"game.exe"}) == u"game.exe",
+          "a lone game executable was not selected");
+
+    // Anything unclear must keep Yuri's directory behaviour rather than guess,
+    // because a wrong exeName would break titles that already boot.
+    check(vita_select_executable_name({u"data.xp3"}).empty(),
+          "a directory with no executable produced one");
+    check(vita_select_executable_name({u"a.exe", u"b.exe"}).empty(),
+          "an ambiguous executable pair was resolved by guessing");
+
+    check(vita_select_executable_name({u"GAME.EXE", u"GAME.CF"}) == u"GAME.EXE",
+          "executable matching is not case-insensitive");
+    // ".cf" must pair with the executable's own base name, not any config.
+    check(vita_select_executable_name({u"tool.exe", u"other.cf", u"main.exe"})
+              .empty(),
+          "an unrelated .cf was treated as an executable pairing");
+}
+
 void test_vita_memory_budget_contract() {
     check(bitmap_allocation_bytes(1280, 960) == 4915240,
           "Vita bitmap budget no longer matches TVPAllocBitmapBits");
     check(kVitaNewlibHeapBytes == 128u * 1024u * 1024u,
           "Vita newlib heap no longer preserves bitmap memblock space");
-    check(kVitaGlApplicationRamThresholdBytes == 80 * 1024 * 1024,
-          "VitaGL threshold no longer reserves bitmap memblock space");
-    check(kVitaNewlibHeapBytes + kVitaGlApplicationRamThresholdBytes ==
-              208u * 1024u * 1024u,
-          "VitaGL pool budget changed while splitting bitmap storage");
-    check(kVitaGlApplicationRamThresholdBytes ==
-              static_cast<int>(kVitaBitmapMemblockBudget +
-                               kVitaGlNonBitmapHeadroomBytes),
-          "bitmap memblocks no longer have independent USER_RW headroom");
+    // vglInitExtended's threshold is the RAM left to the application, so it
+    // must follow the memory that is actually free: a constant hands VitaGL
+    // every byte above it. With ATTRIBUTE2=12 (~365 MiB USER_RW) that was over
+    // 100 MiB held by a presenter that only blits a few 960x544 textures.
+    check(vitagl_application_ram_threshold(210u * 1024u * 1024u) ==
+              static_cast<int>(210u * 1024u * 1024u - kVitaGlPoolBytes),
+          "VitaGL threshold does not leave the application all but its pool");
+    check(vitagl_application_ram_threshold(210u * 1024u * 1024u) >
+              80 * 1024 * 1024,
+          "VitaGL still keeps the old fixed share of an extended-memory build");
+    // Degenerate reports must not hand VitaGL the whole console.
+    check(vitagl_application_ram_threshold(0) ==
+              kVitaGlMinApplicationRamThresholdBytes &&
+              vitagl_application_ram_threshold(kVitaGlPoolBytes) ==
+                  kVitaGlMinApplicationRamThresholdBytes &&
+              vitagl_application_ram_threshold(kVitaGlPoolBytes + 1024) ==
+                  kVitaGlMinApplicationRamThresholdBytes,
+          "VitaGL threshold floor is not applied to a small free-memory report");
     check(vita_bitmap_uses_memblock(1024u * 1024u) &&
               !vita_bitmap_uses_memblock(1024u * 1024u - 1),
           "large bitmap allocation threshold changed at its boundary");
@@ -1163,10 +1205,29 @@ void test_vita_memory_budget_contract() {
     check(vita_bitmap_memblock_bytes(
               std::numeric_limits<std::size_t>::max()) == 0,
           "bitmap memblock size overflow was not rejected");
-    check(vita_bitmap_memblock_budget_allows(0, 4915240) &&
+    // The gate is driven by free USER_RW, not by a fixed ceiling. A 1280x720
+    // project keeps far more than the old 64 MiB of surfaces alive, and
+    // refusing them while the console still had memory was the OOM.
+    const std::size_t retail_bitmap = bitmap_allocation_bytes(1280, 720);
+    check(vita_bitmap_memblock_budget_allows(
+              kVitaBitmapMemblockReserveBytes + 128u * 1024u * 1024u,
+              retail_bitmap),
+          "a large bitmap was refused while USER_RW was plentiful");
+    check(!vita_bitmap_memblock_budget_allows(0, retail_bitmap) &&
               !vita_bitmap_memblock_budget_allows(
-                  kVitaBitmapMemblockBudget - 4096, 4915240),
-          "bitmap memblock live-budget gate is not overflow safe");
+                  kVitaBitmapMemblockReserveBytes, retail_bitmap),
+          "bitmaps were allowed to consume the non-bitmap reserve");
+    // Exactly one mapped page of room above the reserve is the boundary.
+    const std::size_t mapped = vita_bitmap_memblock_bytes(retail_bitmap);
+    check(vita_bitmap_memblock_budget_allows(
+              kVitaBitmapMemblockReserveBytes + mapped, retail_bitmap) &&
+              !vita_bitmap_memblock_budget_allows(
+                  kVitaBitmapMemblockReserveBytes + mapped - 1, retail_bitmap),
+          "bitmap memblock reserve boundary is off by one");
+    check(!vita_bitmap_memblock_budget_allows(
+              std::numeric_limits<std::size_t>::max(),
+              std::numeric_limits<std::size_t>::max()),
+          "bitmap memblock gate is not overflow safe");
 }
 
 void test_vita_render_surface_contract() {
@@ -2833,7 +2894,8 @@ int main(int argc, char** argv) {
         test_yuri_engine_tick_pacer();
         test_yuri_presentation_reference_contract();
         test_deferred_recycle_fixed_point();
-        test_vita_memory_budget_contract();
+        test_vita_executable_name_contract();
+    test_vita_memory_budget_contract();
         test_vita_render_surface_contract();
         test_empty_yuri_string();
         test_yuri_compiler_lifecycle();

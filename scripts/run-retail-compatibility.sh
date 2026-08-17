@@ -4,6 +4,7 @@ set -euo pipefail
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source_root=$(cd -- "$script_dir/.." && pwd)
 manifest=${KRKRVITA_RETAIL_MANIFEST:-$source_root/tests/retail_compatibility_manifest.txt}
+evidence=${KRKRVITA_RETAIL_HARDWARE_EVIDENCE:-$source_root/tests/retail_hardware_evidence.txt}
 runner=${KRKRVITA_RETAIL_RUNNER:-$source_root/build-host/krkrvita-retail-compatibility}
 require_all=0
 if [[ ${1:-} == --require-all ]]; then
@@ -18,10 +19,35 @@ if [[ ! -x $runner ]]; then
     echo "compatibility runner not built: $runner" >&2
     exit 2
 fi
+if [[ ! -f $evidence ]]; then
+    echo "hardware evidence file missing: $evidence" >&2
+    exit 2
+fi
+
+# Physical-Vita receipts. A hardware_blocked row is only honest if the failure
+# it claims is actually recorded, so look the status up rather than trusting
+# the manifest alone.
+declare -A hw_status=()
+declare -A hw_symptom=()
+while IFS= read -r receipt || [[ -n $receipt ]]; do
+    [[ -n $receipt && ${receipt:0:1} != '#' ]] || continue
+    IFS='|' read -r -a hw <<< "$receipt"
+    if ((${#hw[@]} != 5)); then
+        echo "MALFORMED hardware evidence row: $receipt" >&2
+        exit 2
+    fi
+    case ${hw[3]} in
+        passed|blocked) ;;
+        *) echo "INVALID hardware evidence status: ${hw[0]} ${hw[3]}" >&2; exit 2 ;;
+    esac
+    hw_status[${hw[0]}]=${hw[3]}
+    hw_symptom[${hw[0]}]=${hw[4]}
+done < "$evidence"
 
 passed=0
 phase2_blocked=0
 runtime_blocked=0
+hardware_blocked=0
 failed=0
 missing=0
 manifest_errors=0
@@ -74,6 +100,18 @@ while IFS= read -r row || [[ -n $row ]]; do
                 continue
             fi
             ;;
+        hardware_blocked)
+            if [[ $expected_diagnostic != - ]]; then
+                echo "UNEXPECTED host diagnostic on hardware_blocked row: $game_id" >&2
+                ((manifest_errors += 1))
+                continue
+            fi
+            if [[ ${hw_status[$game_id]:-} != blocked ]]; then
+                echo "MISSING blocked hardware receipt: $game_id" >&2
+                ((manifest_errors += 1))
+                continue
+            fi
+            ;;
         *)
             echo "INVALID manifest expectation: $game_id $expectation" >&2
             ((manifest_errors += 1))
@@ -92,6 +130,17 @@ while IFS= read -r row || [[ -n $row ]]; do
             ((passed += 1))
         else
             echo "FAILED $game_id" >&2
+            ((failed += 1))
+        fi
+    elif [[ $expectation == hardware_blocked ]]; then
+        # The host audit must still pass; the blocker is only visible on the
+        # device, so the receipt is what keeps the row honest.
+        if "$runner" --game "$game_path" "$fingerprint" "$rule" \
+                "$recognized" "$samples"; then
+            echo "HARDWARE-BLOCKED $game_id: ${hw_symptom[$game_id]}" >&2
+            ((hardware_blocked += 1))
+        else
+            echo "FAILED $game_id (host audit regressed)" >&2
             ((failed += 1))
         fi
     elif [[ $expectation == runtime_blocked ]]; then
@@ -115,9 +164,11 @@ while IFS= read -r row || [[ -n $row ]]; do
     fi
 done < "$manifest"
 
-echo "retail matrix: $rows titles, $passed compatible, $runtime_blocked runtime-blocked, $phase2_blocked phase-2 blocked, $failed failed, $missing missing"
+# "host audit passed" is deliberately not "compatible": nothing in this script
+# runs on a Vita, so it cannot prove a title works.
+echo "retail matrix: $rows titles, $passed host-audit passed, $hardware_blocked hardware-blocked, $runtime_blocked runtime-blocked, $phase2_blocked phase-2 blocked, $failed failed, $missing missing"
 if ((manifest_errors || failed || missing ||
-      (require_all && (runtime_blocked || phase2_blocked)))); then
-    echo "compatibility gate failed: $manifest_errors manifest errors, $failed unexpected failures, $runtime_blocked runtime blockers, $phase2_blocked phase-2 blockers, $missing missing" >&2
+      (require_all && (runtime_blocked || phase2_blocked || hardware_blocked)))); then
+    echo "compatibility gate failed: $manifest_errors manifest errors, $failed unexpected failures, $hardware_blocked hardware blockers, $runtime_blocked runtime blockers, $phase2_blocked phase-2 blockers, $missing missing" >&2
     exit 1
 fi

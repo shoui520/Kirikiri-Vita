@@ -8,7 +8,6 @@
 #include "krkrvita/yuri_plugin_capabilities.hpp"
 #include "krkrvita/layerexdraw_surface.hpp"
 #include "krkrvita/motionplayer_surface.hpp"
-#include "krkrvita/scriptsex_surface.hpp"
 #include "tjs.h"
 #include "tjsError.h"
 
@@ -1260,10 +1259,6 @@ void run_internal_contract_tests() {
         "var __bounds = __gdi.GetBounds();"
         "var __draw_rect = global.Layer.drawImageStretch(1, 2, 3, 4, __gdi, 0, 0, 4, 5);",
         "layerExDraw surface execution");
-    exec_surface(krkrvita::scriptsex_surface_script, "scriptsEx surface");
-    exec_surface(
-        "var __scripts_count = global.Scripts.getObjectCount(%[a:1,b:2]);",
-        "scriptsEx surface execution");
     TJS::tTJSVariant surface_result;
     surface_engine->EvalExpression(TJS_W("typeof global.Motion.Player"),
                                    &surface_result);
@@ -1295,6 +1290,31 @@ void run_internal_contract_tests() {
             yuri_plugin_has_script_surface("scriptsex.dll") &&
             !yuri_plugin_has_script_surface("krflash.dll"),
             "plugin script-surface capability status is inconsistent");
+
+    // A linkable module is not an implemented one. Pin the fidelity level of
+    // each fallback so a reachable no-op stays reportable as a gap instead of
+    // collapsing into a "supported" bit.
+    require(yuri_plugin_fidelity("arbitrary.dll") ==
+                YuriPluginFidelity::unsupported &&
+            yuri_plugin_fidelity("krflash.dll") ==
+                YuriPluginFidelity::link_only &&
+            yuri_plugin_fidelity("motionplayer.dll") ==
+                YuriPluginFidelity::control_flow_fallback &&
+            yuri_plugin_fidelity("layerexdraw.dll") ==
+                YuriPluginFidelity::control_flow_fallback &&
+            yuri_plugin_fidelity("gfxeffect.dll") ==
+                YuriPluginFidelity::control_flow_fallback &&
+            yuri_plugin_fidelity("extnagano.dll") ==
+                YuriPluginFidelity::behavioral_subset &&
+            yuri_plugin_fidelity("scriptsex.dll") ==
+                YuriPluginFidelity::portable_equivalent &&
+            yuri_plugin_fidelity("sqlite3.dll") ==
+                YuriPluginFidelity::portable_equivalent,
+            "plugin fidelity levels are inconsistent");
+    require(yuri_plugin_fidelity_is_placeholder("layerexdraw.dll") &&
+            yuri_plugin_fidelity_is_placeholder("motionplayer.dll") &&
+            !yuri_plugin_fidelity_is_placeholder("scriptsex.dll"),
+            "placeholder classification does not follow plugin fidelity");
     std::set<std::string_view> unique_modules;
     for (const auto module : yuri_integrated_plugin_modules)
         require(unique_modules.insert(module).second,

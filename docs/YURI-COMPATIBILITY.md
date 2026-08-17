@@ -27,11 +27,25 @@ every expected module name remains in the linked Vita ELF.
 | `wutcwf.dll` | Implemented | Yuri TCWF audio decoder |
 | `extNagano.dll` | Compatibility fallback | Closed-source Nagano transition names (`3duniversal`, `blurfade`, `scanline`, `zoomfade`, `rgbfade`, `spin`, `flutter`, `book`, `imagewipe`, `honeyturn`, `morphing`, `multiripple`) are registered against Yuri's crossfade handler; transition timing and standard options remain honored, but the proprietary pixel effects are not pixel-identical |
 | `krflash.dll` | Load-only fallback | Registers the closed-source Windows ActiveX bridge so titles that only link it during startup can continue. Flash playback and `FlashPlayer` rendering remain unsupported and must stay visible in the compatibility gate when exercised |
-| `gfxEffect.dll` | Script-surface fallback | Registers the documented `gfxFire` object, methods, and properties so scripts do not fail at link/configuration time. The closed-source fire-pixel kernel is a no-op fallback; visual fire effects are not claimed pixel-identical |
-| `motionplayer.dll` | Script-surface fallback | Registers the `Motion.ResourceManager`, `Motion.Player`, and `Motion.SeparateLayerAdaptor` API used by KAGEX startup and motion layers. The fallback preserves control flow and timing but does not implement the proprietary PSB/E-mote renderer; animated motion pixels are not claimed pixel-identical |
-| `layerExDraw.dll` | Script-surface fallback | Registers the `Layer.drawImage*` and `GdiPlus.Image` names used by KAGEX affine layers. Layer-to-layer control flow remains callable; proprietary GDI+ image/affine pixels are not claimed pixel-identical |
-| `scriptsEx.dll` | Script-surface fallback | Registers the startup object/introspection helpers, including `Scripts.getObjectCount`. The full SQ/thread/file extension set is not implemented and remains a visible feature gap if exercised |
+| `gfxEffect.dll` | Control-flow fallback | Registers the documented `gfxFire` object, methods, and properties so scripts do not fail at link/configuration time. The closed-source fire-pixel kernel is a no-op fallback; visual fire effects are not claimed pixel-identical |
+| `motionplayer.dll` | Control-flow fallback | Registers the `Motion.ResourceManager`, `Motion.Player`, and `Motion.SeparateLayerAdaptor` API used by KAGEX startup and motion layers. The fallback preserves control flow and timing but does not implement the proprietary PSB/E-mote renderer; animated motion pixels are not claimed pixel-identical |
+| `layerExDraw.dll` | Control-flow fallback | Registers the `Layer.drawImage*` and `GdiPlus.Image` names used by KAGEX affine layers. Layer-to-layer control flow remains callable; proprietary GDI+ image/affine pixels are not claimed pixel-identical |
+| `scriptsEx.dll` | Implemented | The upstream wamsoft implementation, vendored in `third_party/scriptsEx` and attached to Kirikiri's built-in `Scripts` class: `getObjectCount`/`getObjectKeys` over `GetCount`/`EnumMembers`, deep `clone`, structural `equalStruct`, `propGet`/`propSet` with the `pf*` flags, `foreach`, and MD5 hashing. It replaced a TJS fallback whose `getObjectCount` always returned `0`, because TJS2 dictionaries have no `count` member |
 | `layerExMovie.dll` | Not implemented | Depends on Yuri's old FFmpeg player and GPU texture bridge; VitaSDK supplies modern FFmpeg libraries, but the decoder/player API needs a dedicated port |
+
+Each row's status corresponds to a `krkrvita::YuriPluginFidelity` level in
+`include/krkrvita/yuri_plugin_capabilities.hpp`, so the table and the gate
+cannot disagree. "Control-flow fallback" means every documented name exists
+and returns, and every operation that would produce pixels or audio is a
+no-op. A game that reaches one of those operations on its visible path is
+blocked even though nothing throws; `yuri_plugin_fidelity_is_placeholder()`
+marks exactly those modules.
+
+`tests/test_yuri_plugin_registry.cpp` drives the real sealed registry
+(`ncbAutoRegister::AllRegist` then `LoadModule`) and executes each fallback on
+Yuri's TJS VM. Compiling a module, or finding its boot-trace marker in the
+ELF, proves neither that `Plugins.link` accepts the name nor that the surface
+runs.
 
 `krmovie.dll` is accepted as a Yuri core-loader alias so KAG projects which
 unconditionally link the Windows codec DLL can initialize. This does not claim
