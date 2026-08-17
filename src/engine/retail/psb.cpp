@@ -54,12 +54,23 @@ public:
                 return fail("Truncated PSB v4 header");
             }
         }
-        const std::uint32_t required_offsets[] = {
-            names_offset_, strings_offset_, string_data_offset_,
-            chunk_offsets_offset_, chunk_lengths_offset_, chunk_data_offset_,
-            entries_offset_};
-        for (const auto offset : required_offsets) {
+        // Tables are read starting with a type byte, so their offset must
+        // address a real byte.
+        const std::uint32_t table_offsets[] = {
+            names_offset_, strings_offset_, chunk_offsets_offset_,
+            chunk_lengths_offset_, entries_offset_};
+        for (const auto offset : table_offsets) {
             if (offset >= size_) return fail("PSB table offset is out of range");
+        }
+        // The string and resource payload regions are bases that entries index
+        // into, not tables. An empty region legitimately begins one past the
+        // last byte, which is how every Noble Works scene state is encoded:
+        // no embedded resources, so offsetChunkData == the document size.
+        // Individual reads are still bounds-checked against the payload.
+        const std::uint32_t data_offsets[] = {
+            string_data_offset_, chunk_data_offset_};
+        for (const auto offset : data_offsets) {
+            if (offset > size_) return fail("PSB data offset is out of range");
         }
         std::size_t cursor = names_offset_;
         if (!read_array(cursor, charset_) || !read_array(cursor, names_data_) ||
@@ -77,8 +88,12 @@ public:
         }
         resources_.resize(chunk_offsets_.size());
         if (version_ >= 4) {
-            if (extra_offsets_offset_ >= size_ || extra_lengths_offset_ >= size_ ||
-                extra_data_offset_ >= size_) {
+            if (extra_offsets_offset_ >= size_ ||
+                extra_lengths_offset_ >= size_) {
+                return fail("PSB extra resource offset is out of range");
+            }
+            // Same rule as chunk data: an empty extra payload starts at the end.
+            if (extra_data_offset_ > size_) {
                 return fail("PSB extra resource offset is out of range");
             }
             cursor = extra_offsets_offset_;

@@ -7,6 +7,7 @@
 #include "MsgIntf.h"
 #include "krkrvita/retail_bootstrap.hpp"
 #include "krkrvita/system_app_id_compat.hpp"
+#include "krkrvita/vita_executable_name.hpp"
 #include "krkrvita/vita_storage_path.hpp"
 #include "krkrvita/yuri_storage_preflight.hpp"
 
@@ -75,6 +76,35 @@ ttstr krkrvita_yuri_select_project(const ttstr& native_project_root) {
 
     krkrvita_boot_trace("retail-project-root-selected");
     return root;
+}
+
+ttstr krkrvita_yuri_project_executable_path(const ttstr& native_project_root) {
+    if (native_project_root.IsEmpty()) return ttstr();
+    const std::u16string directory = krkrvita::vita_directory_path(
+        std::u16string_view(native_project_root.c_str(),
+                            native_project_root.GetLen()));
+    const ttstr root(directory);
+
+    ProjectStorageLister lister;
+    try {
+        TVPGetListAt(TVPNormalizeStorageName(root), &lister);
+    } catch (...) {
+        return ttstr();
+    }
+
+    std::vector<std::u16string> names;
+    names.reserve(lister.files.size());
+    for (const auto& file : lister.files)
+        names.emplace_back(file.c_str(), file.GetLen());
+
+    const std::u16string executable =
+        krkrvita::vita_select_executable_name(names);
+    if (executable.empty()) {
+        krkrvita_boot_trace("retail-project-executable-not-identified");
+        return ttstr();
+    }
+    krkrvita_boot_trace("retail-project-executable-identified");
+    return root + ttstr(executable);
 }
 
 void krkrvita_yuri_storage_preflight(const ttstr& native_project_path) {

@@ -25,7 +25,10 @@ class KrkrVitaGdiPlusImage {
     function KrkrVitaGdiPlusImage() {}
     function load(storage) { _storage = storage; return void; }
     function Clone() {
-        var result = new KrkrVitaGdiPlusImage();
+        // Unqualified inside a method, this name resolves to the constructor
+        // member on "this" rather than the class object, so it must be
+        // reached through global.
+        var result = new global.KrkrVitaGdiPlusImage();
         result.imageLeft = imageLeft;
         result.imageTop = imageTop;
         result.imageWidth = imageWidth;

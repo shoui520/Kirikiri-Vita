@@ -167,6 +167,61 @@ void test_noble_works() {
     sqlite3_finalize(statement);
     close_database();
     require(row_count >= 400, "scene database PSB coverage is unexpectedly small");
+
+    // scene.sdb only holds the per-scene "data" column. The blobs the game
+    // actually feeds to PSBFile come from scenedata.sdb's text.state, which
+    // start.ks(9) [scenestart] reaches through KAGEnvPlayer.restore(). Those
+    // are encoded with no embedded resources, so offsetChunkData equals the
+    // document size -- a case scene.sdb never exercises.
+    auto text_database = read_entry(game / "scenario.xp3", "scenedata.sdb",
+                                    128u * 1024u * 1024u);
+    handle = nullptr;
+    require(sqlite3_open(":memory:", &handle) == SQLITE_OK,
+            "cannot create SQLite scenedata fixture database");
+    if (sqlite3_deserialize(handle, "main", text_database.data(),
+                            static_cast<sqlite3_int64>(text_database.size()),
+                            static_cast<sqlite3_int64>(text_database.size()),
+                            SQLITE_DESERIALIZE_READONLY) != SQLITE_OK) {
+        close_database();
+        throw std::runtime_error("cannot deserialize scenedata.sdb");
+    }
+    statement = nullptr;
+    if (sqlite3_prepare_v2(handle,
+            "select scene,idx,state from text where state is not null",
+            -1, &statement, nullptr) != SQLITE_OK) {
+        sqlite3_finalize(statement);
+        close_database();
+        throw std::runtime_error("cannot read scenedata state blob");
+    }
+    int state_count = 0;
+    while (sqlite3_step(statement) == SQLITE_ROW) {
+        const auto* blob = static_cast<const std::uint8_t*>(
+            sqlite3_column_blob(statement, 2));
+        const auto blob_size = sqlite3_column_bytes(statement, 2);
+        require(blob && blob_size > 8, "scene state blob is empty");
+        document = {};
+        const bool parsed = krkrvita::parse_psb(
+            blob, static_cast<std::size_t>(blob_size), document, &error);
+        if (!parsed) {
+            sqlite3_finalize(statement);
+            close_database();
+            throw std::runtime_error(
+                "scenedata state row scene=" +
+                std::to_string(sqlite3_column_int(statement, 0)) + " idx=" +
+                std::to_string(sqlite3_column_int(statement, 1)) + ": " + error);
+        }
+        require(document.root &&
+                    document.root->type == krkrvita::PsbValue::Type::object,
+                "scene state PSB root is not an object");
+        require(!document.root->object.empty(),
+                "scene state PSB object has no members");
+        ++state_count;
+    }
+    sqlite3_finalize(statement);
+    close_database();
+    require(state_count > 50000,
+            "scenedata state coverage is unexpectedly small: " +
+                std::to_string(state_count));
 }
 
 } // namespace
@@ -192,6 +247,38 @@ int main() {
         require(!krkrvita::parse_psb(bad_offset.data(), bad_offset.size(),
                                      document, &error),
                 "out-of-range PSB entry offset was accepted");
+
+        // A table offset must address a real byte, because a table starts with
+        // a type byte. One past the end is still rejected.
+        for (const auto table_field : {12u, 16u, 24u, 28u, 36u}) {
+            auto past_end = bytes;
+            write_u32(past_end, table_field,
+                      static_cast<std::uint32_t>(past_end.size()));
+            require(!krkrvita::parse_psb(past_end.data(), past_end.size(),
+                                         document, &error),
+                    "PSB table offset at the end of the document was accepted "
+                    "at field " + std::to_string(table_field));
+        }
+
+        // Payload bases are different: an empty region legitimately begins one
+        // past the last byte. Rejecting that broke every Noble Works scene
+        // state, so pin both the accepted and the rejected side.
+        for (const auto data_field : {20u, 32u}) {
+            auto at_end = bytes;
+            write_u32(at_end, data_field,
+                      static_cast<std::uint32_t>(at_end.size()));
+            require(krkrvita::parse_psb(at_end.data(), at_end.size(), document,
+                                        &error),
+                    "empty PSB payload region was rejected at field " +
+                        std::to_string(data_field) + ": " + error);
+            auto beyond_end = bytes;
+            write_u32(beyond_end, data_field,
+                      static_cast<std::uint32_t>(beyond_end.size() + 1));
+            require(!krkrvita::parse_psb(beyond_end.data(), beyond_end.size(),
+                                         document, &error),
+                    "PSB payload base past the document was accepted at field " +
+                        std::to_string(data_field));
+        }
 
         test_short_read_join();
         test_noble_works();

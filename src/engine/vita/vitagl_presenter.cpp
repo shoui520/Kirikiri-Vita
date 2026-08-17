@@ -7,6 +7,9 @@
 
 #include <vitaGL.h>
 #include <psp2/io/stat.h>
+#include <psp2/kernel/sysmem.h>
+
+#include <cstdio>
 
 #include <algorithm>
 #include <array>
@@ -22,11 +25,29 @@ namespace {
 constexpr int kScreenWidth = 960;
 constexpr int kScreenHeight = 544;
 // vglInitExtended's fourth parameter is the amount of free USER_RW RAM left
-// outside VitaGL, not the size of VitaGL's pool. This reserve backs the
-// independently reclaimable CPU bitmap memblocks and ordinary non-graphics
-// headroom; it is not handed to VitaGL's texture allocator.
-constexpr int kApplicationRamThreshold =
-    krkrvita::kVitaGlApplicationRamThresholdBytes;
+// outside VitaGL, not the size of VitaGL's pool: VitaGL claims everything
+// above it. A constant here therefore gives VitaGL every byte the application
+// did not reserve up front, which on an ATTRIBUTE2=12 build is well over
+// 100 MiB that this presenter never touches. Measure what is actually free and
+// leave VitaGL only kVitaGlPoolBytes.
+int application_ram_threshold() {
+    SceKernelFreeMemorySizeInfo info{};
+    info.size = sizeof(info);
+    if (sceKernelGetFreeMemorySize(&info) < 0 || info.size_user <= 0) {
+        krkrvita_boot_trace("vitagl-free-memory-query-failed");
+        return krkrvita::kVitaGlMinApplicationRamThresholdBytes;
+    }
+    const int threshold = krkrvita::vitagl_application_ram_threshold(
+        static_cast<std::size_t>(info.size_user));
+    // The exact figures decide how much large-bitmap memory a retail project
+    // gets, so put them in the hardware log rather than inferring them.
+    char trace[96];
+    std::snprintf(trace, sizeof trace,
+                  "vitagl-user-ram-free-%dm-threshold-%dm",
+                  info.size_user / (1024 * 1024), threshold / (1024 * 1024));
+    krkrvita_boot_trace(trace);
+    return threshold;
+}
 // vitaGL keeps resources referenced by the preceding four frames alive.
 // Updating a texture inside that window makes glTexSubImage2D clone its old
 // backing store first. Five presentation textures match vitaGL's documented
@@ -362,7 +383,7 @@ bool krkrvita_vitagl_initialize() {
     // failed. The library has no recoverable failure return from this API.
     const GLboolean resolution_fallback =
         vglInitExtended(0, kScreenWidth, kScreenHeight,
-                        kApplicationRamThreshold,
+                        application_ram_threshold(),
                         SCE_GXM_MULTISAMPLE_NONE);
     krkrvita_boot_trace("vitagl-init-returned");
     if (resolution_fallback)

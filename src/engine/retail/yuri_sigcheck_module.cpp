@@ -11,10 +11,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
-#include <mutex>
 #include <string>
-#include <thread>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -23,8 +20,6 @@
 namespace {
 
 std::atomic<tjs_int> next_handler{1};
-std::mutex jobs_mutex;
-std::unordered_map<tjs_int, std::weak_ptr<std::atomic<bool>>> jobs;
 
 std::string narrow_ascii(const ttstr& text) {
     std::string output;
@@ -74,8 +69,26 @@ bool read_signature(const ttstr& path, std::vector<std::uint8_t>& output,
 
 bool verify_storage(const ttstr& target, const std::string& public_key,
                     std::string& error) {
+    // An absent .sig means "this file is not signed", not "this file failed".
+    //
+    // Aoi Tori's release.ks checks Storages.chopStorageExt(System.exeName) plus
+    // every archive, and exits on result < 1. The shipped game has a .sig for
+    // each .xp3 but none for allokmama.exe, and it runs on Windows through that
+    // same executable -- so the original sigcheck.dll cannot be reporting a
+    // missing signature as a failure. Treating it as one is stricter than the
+    // plug-in we are standing in for, and refuses titles that are intact.
+    //
+    // Files that do ship a signature are still verified strictly: a malformed,
+    // unreadable or non-matching .sig below is a hard failure. The tamper check
+    // therefore still covers everything the author actually signed.
+    const ttstr signature_path = target + TJS_W(".sig");
+    if (!TVPIsExistentStorage(signature_path)) {
+        error.clear();
+        return true;
+    }
+
     std::vector<std::uint8_t> signature;
-    if (!read_signature(target + TJS_W(".sig"), signature, error)) return false;
+    if (!read_signature(signature_path, signature, error)) return false;
 
     krkrvita::RsaPssSha256Verifier verifier;
     if (!verifier.initialize(public_key, &error)) return false;
@@ -131,47 +144,42 @@ tjs_error check_signature(tTJSVariant* result, tjs_int numparams,
     }
     if (!owner)
         TVPThrowExceptionMessage(TJS_W("No Window instance for signature callback"));
-    owner->AddRef();
 
     tjs_int handler = next_handler.fetch_add(1);
     if (handler <= 0) {
         next_handler.store(2);
         handler = 1;
     }
-    auto cancelled = std::make_shared<std::atomic<bool>>(false);
-    {
-        std::lock_guard<std::mutex> lock(jobs_mutex);
-        jobs[handler] = cancelled;
-    }
     if (result) *result = handler;
 
-    std::thread([target, public_key, owner, handler, cancelled] {
-        std::string error;
-        const bool verified = verify_storage(target, public_key, error);
-        if (!cancelled->load()) deliver_done(owner, handler, verified, error);
-        owner->Release();
-        std::lock_guard<std::mutex> lock(jobs_mutex);
-        jobs.erase(handler);
-    }).detach();
+    // Verification runs inline, on the caller's thread.
+    //
+    // It is tempting to hash a multi-megabyte archive on a worker, but nothing
+    // in this path is thread-safe. TVPCreateStream walks Yuri's media manager,
+    // archive table and auto-path table, all of which the main thread is still
+    // mutating while startup scripts load; iTJSDispatch2 reference counts are
+    // plain ints; and TVPPostEvent pushes onto an unlocked std::vector. A
+    // detached worker here corrupted engine state and crashed on an indirect
+    // call through the damage.
+    //
+    // The script contract is preserved because the result is still delivered
+    // through the event queue: checkSignature returns a handler immediately and
+    // onCheckSignatureDone arrives from the normal event dispatch, exactly as
+    // the caller expects. The cost is a startup pause while the archive is
+    // hashed, which the title is waiting on anyway.
+    std::string error;
+    const bool verified = verify_storage(target, public_key, error);
+    deliver_done(owner, handler, verified, error);
     return TJS_S_OK;
 }
 
 tjs_error cancel_signature(tTJSVariant* result, tjs_int numparams,
-                           tTJSVariant** param, iTJSDispatch2*) {
+                           tTJSVariant**, iTJSDispatch2*) {
     if (numparams < 1) return TJS_E_BADPARAMCOUNT;
-    const tjs_int handler = static_cast<tjs_int>(*param[0]);
-    bool cancelled = false;
-    {
-        std::lock_guard<std::mutex> lock(jobs_mutex);
-        const auto found = jobs.find(handler);
-        if (found != jobs.end()) {
-            if (auto job = found->second.lock()) {
-                job->store(true);
-                cancelled = true;
-            }
-        }
-    }
-    if (result) *result = cancelled ? 1 : 0;
+    // Verification completes before checkSignature returns, so by the time a
+    // script can cancel a handler there is never one in flight. Report "not
+    // cancelled" rather than pretending otherwise.
+    if (result) *result = 0;
     return TJS_S_OK;
 }
 

@@ -74,6 +74,18 @@ void* allocate_malloc(std::size_t size) {
     return reinterpret_cast<void*>(payload_address);
 }
 
+// Free USER_RW as the kernel sees it. Bitmaps at this size are allocated at
+// scene granularity, not per frame, so one syscall per large allocation is
+// cheaper than the fixed ceiling it replaces. A failed query returns 0, which
+// routes the request to the malloc fallback rather than to an unbounded
+// memblock allocation.
+std::size_t free_user_memory() {
+    SceKernelFreeMemorySizeInfo info{};
+    info.size = sizeof(info);
+    if (sceKernelGetFreeMemorySize(&info) < 0 || info.size_user <= 0) return 0;
+    return static_cast<std::size_t>(info.size_user);
+}
+
 void report_malloc_fallback() {
     std::lock_guard<std::mutex> lock(budget_mutex);
     if (malloc_fallback_reported) return;
@@ -109,8 +121,7 @@ void* vita_bitmap_allocate(std::size_t size) {
     bool memblock_reserved = false;
     {
         std::lock_guard<std::mutex> lock(budget_mutex);
-        if (vita_bitmap_memblock_budget_allows(
-                static_cast<std::size_t>(live_memblock_bytes), size)) {
+        if (vita_bitmap_memblock_budget_allows(free_user_memory(), size)) {
             live_memblock_bytes += mapped_size;
             memblock_reserved = true;
             report_memblock_backend_locked();
@@ -150,12 +161,12 @@ void* vita_bitmap_allocate(std::size_t size) {
         }
     }
 
-    // A retail KAG project can keep more than 64 MiB of 1280x960 dynamic
-    // message/layer surfaces alive at once.  The fixed newlib heap is already
-    // reserved before VitaGL starts, so overflowing there does not steal from
-    // VitaGL's pool.  Memblocks remain the preferred, independently
-    // reclaimable tier; this fallback restores the capacity of Yuri's normal
-    // allocator instead of turning the memblock budget into a hard OOM limit.
+    // Memblocks are the preferred tier because they are independently
+    // reclaimable and immune to newlib fragmentation. This fallback covers the
+    // cases the kernel cannot satisfy: the reserve is exhausted, the query
+    // failed, or sceKernelAllocMemBlock refused the mapping. Spilling into the
+    // fixed newlib heap keeps the capacity of Yuri's normal allocator instead
+    // of turning a transient shortage into an immediate OOM.
     void* memory = allocate_malloc(size);
     if (memory) report_malloc_fallback();
     return memory;

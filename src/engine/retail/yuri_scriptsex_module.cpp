@@ -1,21 +1,19 @@
 #include "ncbind/ncbind.hpp"
 
 #include "krkrvita/retail_bootstrap.hpp"
-#include "krkrvita/scriptsex_surface.hpp"
 
-#include <string>
-
+// The scriptsEx surface itself comes from the upstream wamsoft implementation
+// vendored in third_party/scriptsEx (see its README).  That module registers
+// the real Scripts members, so this translation unit only records that the
+// plug-in reached registration for the hardware boot log.
 #define NCB_MODULE_NAME TJS_W("scriptsEx.dll")
 
 namespace {
 
-void register_scriptsex_surface() {
-    const auto script = TJS::ttstr(
-        std::string(krkrvita::scriptsex_surface_script));
-    TVPExecuteScript(script.c_str(), TJS_W("krkrvita-scriptsex-surface.tjs"), 0);
+void trace_scriptsex_ready() {
     krkrvita_boot_trace("retail-scriptsex-surface-ready");
 }
 
 } // namespace
 
-NCB_PRE_REGIST_CALLBACK(register_scriptsex_surface);
+NCB_POST_REGIST_CALLBACK(trace_scriptsex_ready);

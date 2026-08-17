@@ -120,4 +120,49 @@ constexpr bool yuri_plugin_has_script_surface(std::string_view module) {
            module == "layerexdraw.dll" || module == "scriptsex.dll";
 }
 
+// How closely the Vita build reproduces a plug-in.  A single "supported"
+// boolean has repeatedly been read as "this game works": a module can be
+// linkable, expose every documented name, and still draw nothing.  Report the
+// level instead so a reachable no-op is describable as the gap it is.
+enum class YuriPluginFidelity {
+    // The sealed registry does not know the module; Plugins.link throws.
+    unsupported,
+    // Links so a caught load succeeds, but supplies no behaviour at all.
+    link_only,
+    // Supplies the script-visible names and keeps KAG control flow alive,
+    // while the operations that produce pixels or audio are no-ops.
+    control_flow_fallback,
+    // Real behaviour with documented gaps, or a deliberate substitution such
+    // as mapping a closed-source transition set onto a crossfade.
+    behavioral_subset,
+    // The upstream or an equivalent portable implementation is compiled in.
+    portable_equivalent,
+};
+
+constexpr YuriPluginFidelity yuri_plugin_fidelity(std::string_view module) {
+    if (!yuri_plugin_link_is_supported(module))
+        return YuriPluginFidelity::unsupported;
+    // krflash never plays Flash; the link exists only so startup continues.
+    if (module == "krflash.dll") return YuriPluginFidelity::link_only;
+    // gfxEffect keeps gfxFire's state and call surface; the fire kernel is a
+    // no-op.  motionplayer and layerExDraw expose their classes but draw
+    // nothing: no E-mote/PSB renderer and no GDI+ backing exist on Vita.
+    if (module == "gfxeffect.dll" || module == "motionplayer.dll" ||
+        module == "layerexdraw.dll")
+        return YuriPluginFidelity::control_flow_fallback;
+    // extNagano's documented provider names are mapped onto Yuri's crossfade,
+    // so transitions run with the right timing but not the right pixels.
+    if (module == "extnagano.dll") return YuriPluginFidelity::behavioral_subset;
+    return YuriPluginFidelity::portable_equivalent;
+}
+
+// A reachable call into one of these modules is a compatibility blocker even
+// when startup no longer throws, because the game gets a plausible answer
+// instead of the effect it asked for.
+constexpr bool yuri_plugin_fidelity_is_placeholder(std::string_view module) {
+    const auto fidelity = yuri_plugin_fidelity(module);
+    return fidelity == YuriPluginFidelity::link_only ||
+           fidelity == YuriPluginFidelity::control_flow_fallback;
+}
+
 } // namespace krkrvita
