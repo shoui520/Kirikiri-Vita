@@ -51,10 +51,10 @@ fail because the old diagnostic disappeared. Promote the manifest row to
 `phase1` only after the complete static audit and a physical-Vita smoke run
 both pass.
 
-## Current 19-title result
+## Current 20-title result
 
 The current result is 10 host-audit passed, 6 hardware verified, 1
-hardware-blocked, 1 runtime-blocked and 1 Phase-2 blocked, with no missing
+hardware-blocked, 2 runtime-blocked and 1 Phase-2 blocked, with no missing
 paths or unexpected diagnostics. The blocked rows are deliberate fail-closed
 regression gates.
 
@@ -89,6 +89,7 @@ agreement with the executable gate.
 | host-audit passed | oujo_wkishi | 王女＆女騎士Ｗド下品露出 | — |
 | hardware verified | allokmama | ダメダメなボクに舞い降りた全肯定ママ女神！ | — |
 | host-audit passed | hinako | Moto Yankee Tsuma Hinako | — |
+| runtime-blocked | violatedhero3 | 犯され勇者Ⅲ | `AlphaMovie.dll` has no Vita implementation |
 
 A row records the first blocker, not an assertion that no later blocker exists.
 Fixing it intentionally advances the audit to the next unsupported dependency.
@@ -117,18 +118,68 @@ which failed. That coverage now exists, along with assertions on both sides of
 the boundary.
 
 Independently of that fix, `motionplayer` and `layerExDraw` remain
-`control_flow_fallback` modules, and `layerExRaster.dll`, `layerExBtoA.dll` and
-`layerExSubImage.dll` are not in the registry at all. Those three links are
-guarded by `try`/`catch` behind a `typeof` feature test, so their absence costs
-the optional effect and nothing else. Noble Works also ships `nobleworks.tpm`,
+`control_flow_fallback` modules, and `layerExRaster.dll` and
+`layerExSubImage.dll` are not in the registry at all. Both links are guarded by
+`try`/`catch` behind a `typeof` feature test, so their absence costs the
+optional effect and nothing else. Noble Works also ships `nobleworks.tpm`,
 `yuzuex.dll` and `kagexopt.dll`, which the sealed registry does not implement,
 and `Storages.getLastModifiedFileTime` is missing, which throws once per
 transition from `kagenvironment.tjs(619)`.
 
-Real portable implementations of `layerExDraw`, `layerExRaster`, `layerExBTOA`
-and `windowEx` exist in the KrKr2-Next tree. `layerExDraw`'s non-Windows
-backend depends on libgdiplus (glib/cairo/pango), so adopting it on Vita is a
-port in its own right rather than a drop-in.
+`layerExBTOA` was on that list until Violated Hero III forced the issue: that
+title links it *without* a `try`/`catch`, so it is boot-fatal there rather than
+optional. It is now the vendored upstream implementation in
+`third_party/layerExBTOA`.
+
+Real portable implementations of `layerExDraw`, `layerExRaster` and `windowEx`
+also exist in the KrKr2-Next tree. `layerExDraw`'s non-Windows backend depends
+on libgdiplus (glib/cairo/pango), so adopting it on Vita is a port in its own
+right rather than a drop-in.
+
+### Violated Hero III
+
+The corpus's first title built around gameplay rather than a reading path: an
+RPG with battles, stage selection, a skill tree and a picture book, driven by
+CSV data tables. It was added to answer whether the gate's shape assumed a
+visual novel. It largely did not — but reaching that answer took two general
+capabilities the engine was missing.
+
+**Its archive needed a filter family Phase 1 could not express.** `data.xp3`
+is 2 GB behind a transform that changes key every 123 bytes: `hash*21` XOR,
+then `hash*32` subtract, then `hash*43` XOR, then `hash*54` subtract for the
+rest of each file. A whole-file search recovers only the first region, decodes
+every file's header, and reports the archive as needing executable analysis —
+the same verdict DeepOne gets, for a much simpler reason. `docs/FILTER-HEURISTICS.md`
+describes the segmented-rule recovery that closes this. The recovered rule now
+verifies against all 6,402 entries; the tool reports it as
+
+```
+segmented_xor_hash_times_21_to_123_sub_hash_times_32_from_123_to_246_
+xor_hash_times_43_from_246_to_369_sub_hash_times_54_from_369
+```
+
+**Its startup script would have ended the boot.** `startup.tjs` opens with the
+standard Kirikiri idiom that relaunches the process with `-debugwin=no` unless
+that option is already set. A Vita application cannot relaunch itself, so the
+`System.exit()` that follows is final. The launcher now seeds the engine
+option a Vita build settles by construction — `-debugwin=no` — so
+`System.getArgument` reports what this engine actually does and the script
+continues. This is not specific to the title; the idiom is
+near-universal in Kirikiri games.
+
+`layerExBTOA.dll`, which the title links without a `try`/`catch`, is now the
+vendored upstream implementation in `third_party/layerExBTOA`. `csvParser`,
+`fstat`, `wuvorbis` and `krmovie` were already covered.
+
+What remains is `AlphaMovie.dll`, and it is the row's pinned diagnostic. The
+title ships 47 `.amv` files totalling 523 MB — every battle skill animation —
+and subclasses the plug-in's `AlphaMovie` class at script load, so an absent
+class ends the boot rather than costing an effect. `include/krkrvita/ajpm.hpp`
+documents the container, which had no public description; the parser and its
+alpha plane are proven against all 3,638 shipped frames. The colour plane is
+only partly understood and is deliberately exposed as raw bytes rather than
+wrapped in something that looks decodable. No playback path exists yet, and
+none is claimed.
 
 ### Virtual optical-media checks
 

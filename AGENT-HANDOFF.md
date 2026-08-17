@@ -2564,3 +2564,123 @@ translation units link against identical code. Confined to that one file.
 
 `車輪の国、向日葵の少女` remains **`hardware_blocked`**. Nine device runs, no
 fix. The next step is bisection in the harness (§39.3), not a tenth run.
+
+---
+
+## §40 Violated Hero III: the corpus's first gameplay title
+
+`/mnt/j/dieselmine/violatedhero3` — 犯され勇者Ⅲ, Dieselmine, 2013. An RPG with
+battles, stage selection, a skill tree and a picture book, driven by CSV data
+tables rather than a linear reading path. It was added to the gate to find out
+whether the compatibility architecture had quietly been shaped around visual
+novels. Mostly it had not; two general gaps turned up on the way.
+
+### 40.1 The archive needed a filter family Phase 1 could not express
+
+`data.xp3` is 2 GB, 6,402 entries. Phase 1 reported
+
+> files use internally uniform but mutually different keys; the per-hash
+> mapping or key function is not identifiable from archive data
+
+which is the same verdict DeepOne gets, for an entirely different and much
+simpler reason. The transform changes key every 123 bytes:
+
+| Offset | Transform |
+| --- | --- |
+| `[0, 123)` | `byte ^= (hash * 21) & 0xff` |
+| `[123, 246)` | `byte -= (hash * 32) & 0xff` |
+| `[246, 369)` | `byte ^= (hash * 43) & 0xff` |
+| `[369, ∞)` | `byte -= (hash * 54) & 0xff` |
+
+Two things had to change. First, the rule model gained offset segments and
+hash-multiplied keys in both XOR and subtractive form — a filter that *adds*
+on write is not an involution and can never appear as a XOR that fits every
+known byte. Second, the search gained a segment-discovery pass; see
+`docs/FILTER-HEURISTICS.md`.
+
+**The scoring change matters more than the rule family.** A transform that
+reproduces a file's magic bytes and then produces noise used to score as well
+as one that decodes the whole file, because `score_plaintext` rewards
+signatures. `decoded_agreement()` now measures how much of a decoded sample
+still agrees with its format — PNG chunk CRCs, Ogg page CRCs, how far a script
+stays readable — and the shortfall is charged against the rule. Without that,
+`xor_hash_times_21` alone scored 2644 against a 2080 threshold and was
+*accepted*, silently corrupting everything past byte 123.
+
+Two traps found while building this, both worth remembering:
+
+- **The disagreement penalty buries the seed.** A segmented filter's first
+  region is exactly a transform that explains only the head, so the penalty
+  pushes it down the ranking. Segment discovery is seeded from a separate
+  unpenalised ordering (`by_signature_score`). Rank by penalised score and
+  discovery never starts.
+- **CP932 validity is not a decode check.** CP932 accepts `0xa1-0xdf`
+  outright and most of `0x81-0xef` as lead bytes, so ASCII shifted by a wrong
+  key lands almost entirely inside "valid" territory. Region solving was
+  happily accepting wrong keys until it started ranking by ASCII content and
+  re-validating the finished rule over each probe's whole length.
+
+### 40.2 The startup script would have ended the boot
+
+`startup.tjs` opens with the standard Kirikiri idiom:
+
+```tjs
+with(System) {
+  if ( .getArgument("-debugwin") != "no" ) {
+    .shellExecute( Storages.getLocalName(.exeName), "-debugwin=no" );
+    .exit();
+  }
+}
+```
+
+On Windows that costs one extra process start. On Vita the application cannot
+relaunch itself, so `System.exit()` is final and the title screen is never
+reached. `src/engine/vita/vita_launch.cpp` now seeds the options a Vita build
+settles by construction — `-debugwin=no` — so `getArgument` reports what this
+engine actually does. Only options this build genuinely settles belong there;
+anything a player or a title might legitimately choose does not.
+
+`System.getArgument` itself already existed, in
+`vendor/yuri/src/core/base/win32/SystemImpl.cpp`. I concluded it was missing
+because I grepped that file **without `-a`** and it is Shift-JIS. That is the
+third time this trap has cost time in this project (§29.1, §37.5). Always
+`grep -a` in the Yuri tree.
+
+### 40.3 What is left: AlphaMovie
+
+47 `.amv` files, 523 MB — every battle skill animation. The title does
+`class AlphaMoviePlayer extends AlphaMovie` at script load, so an absent class
+ends the boot rather than costing an effect. With `alphamovie.dll` treated as
+present the audit passes completely, so this is the single remaining blocker.
+
+The container had no public description. `include/krkrvita/ajpm.hpp` documents
+it and `src/common/ajpm.cpp` parses it:
+
+- 168-byte header: magic, file size, data offset, frame count, version, fps,
+  then two 64-byte JPEG quantisation tables.
+- `FRAM` chunks: frame index, x, y, width, height, compressed alpha size, a
+  zlib stream inflating to exactly `width * height` alpha bytes, one byte of
+  unknown purpose, then the colour plane.
+
+The container walk and the alpha plane are proven against **all 3,638 frames**
+of all 47 movies (`KRKRVITA_AJPM_EXHAUSTIVE=1 ./build-host/krkrvita-ajpm-test`).
+
+The colour plane is **only partly understood, and is exposed as raw bytes for
+that reason**. For `video/effect/*` it is baseline JPEG, YCbCr 4:2:0, using the
+header's quantisation tables and the standard Annex K Huffman tables, with the
+entropy data stored *without* JPEG byte stuffing; `rebuild_baseline_jpeg()`
+reconstructs a file that decodes, and the scan yields exactly the declared
+4:2:0 block count. For `video/tentacle/*` the same reconstruction fails at
+every byte offset and sampling factor, although the headers, quantisation
+tables, version and frame rate are identical. That difference is unexplained.
+
+Do not wrap this in something that looks decodable. A frame is renderable only
+once a decoder has accepted it.
+
+### 40.4 Status
+
+`violatedhero3` is **`runtime_blocked`** on
+`boot-reachable unsupported plugin alphamovie.dll requested at
+scenario/alphamovie.ks:5`. Everything else about the title passes: Phase 1 at
+12/12, every script compiles, no unsupported assets, no unresolved storages.
+No hardware run has been attempted, and nothing here claims one.
