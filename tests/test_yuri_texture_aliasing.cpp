@@ -1,4 +1,4 @@
-// Host reproduction harness for the Sharin no Kuni black-layer defect.
+// Host reproduction harness for a retail black-layer defect.
 //
 // Eight hardware rounds established this much: a message layer's bitmap is
 // filled correctly (0x80000000 for the message box, 0x00000000 for the title

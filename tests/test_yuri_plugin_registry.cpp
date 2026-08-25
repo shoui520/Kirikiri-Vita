@@ -2,7 +2,7 @@
 //
 // The Vita build seals dynamic plugin loading: TVPLoadPlugin() resolves a
 // module purely through ncbAutoRegister and throws TVPCannotLoadPlugin when
-// the name is unknown.  Retail scripts such as Noble Works' custom.tjs(57)
+// the name is unknown. Some retail scripts
 // wrap Plugins.link() in a catch that calls System.inform(), so a registry
 // miss (or a fallback surface that throws while registering) turns into a
 // modal window over a black frame on hardware.
@@ -308,7 +308,7 @@ var krkrvitaProbeLayer = new Layer(void, void);
     check(executed_scripts.size() == 2,
           "fallback surfaces re-executed on a repeated Plugins.link");
 
-    // motionplayer: Noble Works reaches Motion.ResourceManager from
+    // motionplayer: a retail title reaches Motion.ResourceManager from
     // motion.tjs(20) immediately after the caught link.
     exec(R"TJS(
 var krkrvitaMotionManager = new Motion.ResourceManager(void, 16);

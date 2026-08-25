@@ -66,5 +66,4 @@ yuri-render-task-pool-ready
 vitagl-first-contentful-frame-presented
 vitagl-60-game-frames-presented
 retail-runtime-5s-stable-with-video
-vita-performance-telemetry-ready
 retail-runtime-30s-stable-with-video

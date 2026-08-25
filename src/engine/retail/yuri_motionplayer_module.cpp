@@ -5,7 +5,7 @@
 
 #include <string>
 
-// Noble Works and several KAGEX titles link motionplayer.dll inside a catch
+// Several KAGEX titles link motionplayer.dll inside a catch
 // block, then immediately use Motion.ResourceManager/Player.  A missing DLL
 // therefore looks optional to a literal plugin scanner but is a hard startup
 // dependency in practice.  This Vita surface preserves the script contract

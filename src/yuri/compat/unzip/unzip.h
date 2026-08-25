@@ -8,8 +8,8 @@
 
 namespace cocos2d {
 extern "C" {
-#include "../../../../vendor/yuri/src/core/utils/minizip/ioapi.h"
-#include "../../../../vendor/yuri/src/core/utils/minizip/unzip.h"
+#include <minizip/ioapi.h>
+#include <minizip/unzip.h>
 }
 } // namespace cocos2d
 

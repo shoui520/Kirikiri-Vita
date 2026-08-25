@@ -3,7 +3,7 @@
 #include "krkrvita/retail_bootstrap.hpp"
 
 // The scriptsEx surface itself comes from the upstream wamsoft implementation
-// vendored in third_party/scriptsEx (see its README).  That module registers
+// fetched from the pinned KrKr2-Next source. That module registers
 // the real Scripts members, so this translation unit only records that the
 // plug-in reached registration for the hardware boot log.
 #define NCB_MODULE_NAME TJS_W("scriptsEx.dll")

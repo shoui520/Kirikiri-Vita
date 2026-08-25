@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${VITASDK:=/home/shoui/vitasdk}"
+: "${VITASDK:?Set VITASDK to the VitaSDK installation directory}"
 : "${JOBS:=12}"
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -9,6 +9,8 @@ repo_root=$(cd -- "$script_dir/.." && pwd)
 ffmpeg_commit=239f2c733de417201d7ad3b3b8b0d9b63285b2b1
 source_dir=${KRKRVITA_FFMPEG_SOURCE_DIR:-$repo_root/.cache/src/ffmpeg-8.1.1}
 prefix=${KRKRVITA_FFMPEG_PREFIX:-$repo_root/.cache/ffmpeg-vita-8.1.1}
+build_signature="ffmpeg-$ffmpeg_commit-vita-release-no-debug-v1"
+build_stamp=$prefix/.krkrvita-build
 
 if [[ ! -x $VITASDK/bin/arm-vita-eabi-gcc ]]; then
     echo "Vita compiler not found under VITASDK: $VITASDK" >&2
@@ -21,6 +23,18 @@ fi
 if [[ ! $JOBS =~ ^[1-9][0-9]*$ ]]; then
     echo "JOBS must be a positive integer" >&2
     exit 2
+fi
+
+archives_ready=true
+for archive in avformat avcodec avutil swresample swscale; do
+    if [[ ! -s $prefix/lib/lib${archive}.a ]]; then
+        archives_ready=false
+    fi
+done
+if $archives_ready && [[ -f $build_stamp ]] &&
+   grep -Fqx -- "$build_signature" "$build_stamp"; then
+    echo "Pinned release FFmpeg is already installed at $prefix"
+    exit 0
 fi
 
 if [[ ! -d $source_dir/.git ]]; then
@@ -37,6 +51,9 @@ fi
 
 mkdir -p -- "$prefix"
 cd -- "$source_dir"
+if [[ -f ffbuild/config.mak ]]; then
+    make distclean
+fi
 ./configure \
     --prefix="$prefix" \
     --enable-cross-compile \
@@ -47,6 +64,7 @@ cd -- "$source_dir"
     --disable-shared \
     --enable-static \
     --disable-programs \
+    --disable-debug \
     --disable-doc \
     --disable-network \
     --disable-everything \
@@ -82,5 +100,7 @@ make install
 for archive in avformat avcodec avutil swresample swscale; do
     test -s "$prefix/lib/lib${archive}.a"
 done
+
+printf '%s\n' "$build_signature" > "$build_stamp"
 
 echo "Installed pinned Vita FFmpeg $ffmpeg_commit to $prefix"

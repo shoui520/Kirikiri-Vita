@@ -7,8 +7,7 @@
 namespace krkrvita {
 
 // Kirikiri's System.exeName is the full path of the game's Windows
-// executable, and titles derive sibling resources from it. Aoi Tori's
-// "ダメダメなボクに舞い降りた全肯定ママ女神" opens script/first.ks with
+// executable, and some titles derive sibling resources from it, for example:
 //
 //   var file = Storages.chopStorageExt(System.exeName) + ".cf";
 //   if (Storages.isExistentStorage(file) != true) { inform(...); System.exit(); }

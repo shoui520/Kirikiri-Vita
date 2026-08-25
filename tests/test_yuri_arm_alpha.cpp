@@ -53,7 +53,7 @@ int main() {
     TVPInitTVPGL();
 
     // Internal Kirikiri pixels are 0xAARRGGBB. These include transparent and
-    // partially transparent colors sampled from Sharin no Kuni's title UI,
+    // partially transparent colors sampled from an affected title's UI,
     // plus edge values that exercise both scalar fragments and NEON lanes.
     constexpr std::array<tjs_uint32, 19> straight = {
         0x00ffffff, 0x01010101, 0x101008f0, 0x204080c0, 0x3f204060,
@@ -101,7 +101,7 @@ int main() {
     ok &= compare("AdditiveAlphaBlend_o", TVPAdditiveAlphaBlend_HDA_o_c,
                   TVPAdditiveAlphaBlend_HDA_o, additive, background, 173);
 
-    // Sharin's title buttons are ltAlpha children of its ltAddAlpha
+    // The affected title's buttons are ltAlpha children of its ltAddAlpha
     // message layer. That selects the destination-alpha variants below,
     // rather than the opaque-destination functions above.
     ok &= compare("AlphaBlend_a", TVPAlphaBlend_a_c, TVPAlphaBlend_a,
@@ -135,7 +135,7 @@ int main() {
         ok = false;
     }
 
-    // Sharin's visible result is a two-stage operation: glyph coverage is
+    // The visible result is a two-stage operation: glyph coverage is
     // accumulated in a transparent ltAddAlpha message layer, then that layer
     // is composited over the opaque scene.  Check the final displayed words,
     // not only the intermediate alpha bytes.
@@ -152,14 +152,14 @@ int main() {
     TVPAdditiveAlphaBlend_HDA(frame_actual.data(), message_actual.data(),
                               glyph.size());
     if (frame_expected != frame_actual) {
-        std::fputs("Sharin-shaped two-stage composition differs\n", stderr);
+        std::fputs("two-stage retail composition differs\n", stderr);
         ok = false;
     }
 
     // TVP_BLEND_4 picks the plain, non-HDA function whenever the destination
     // layer is opaque, and an ltAddAlpha message layer over the primary layer
     // is exactly that case. Every check above used the _HDA forms, so the
-    // functions Sharin's message box actually goes through were never
+    // functions the affected message box actually goes through were never
     // compared against scalar TVPGL at all.
     ok &= compare("AdditiveAlphaBlend(plain)", TVPAdditiveAlphaBlend_c,
                   TVPAdditiveAlphaBlend, additive, background);
@@ -183,14 +183,14 @@ int main() {
         const bool rgb = (plain_expected[index] & 0x00ffffffu) !=
                          (plain_actual[index] & 0x00ffffffu);
         std::fprintf(stderr,
-            "Sharin opaque-destination composition %s at %zu: "
+            "retail opaque-destination composition %s at %zu: "
             "scalar=%08x selected=%08x src=%08x dst=%08x\n",
             rgb ? "RGB DIFFERS" : "alpha-only", index, plain_expected[index],
             plain_actual[index], message_expected[index], background[index]);
         if (rgb) { ok = false; break; }
     }
 
-    // Sharin's title menu is a full-screen ltAddAlpha message layer created
+    // The affected title menu is a full-screen ltAddAlpha message layer created
     // with `@position frame="" opacity=0`, so MessageLayer.tjs fills it with
     // ARGB 0x00000000 and composites it over the title art. A fully
     // transparent source must leave the destination untouched.
@@ -241,7 +241,7 @@ int main() {
         }
     }
 
-    // Repeated composition is what turns that into a black screen: Sharin's
+    // Repeated composition is what turns that into a black screen: the title's
     // title keeps a full-screen opacity-0 message layer over the art and the
     // animated menu re-composites it every frame.
     {

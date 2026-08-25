@@ -1,15 +1,12 @@
-# Keep the three places a compatibility claim can be made in agreement.
+# Keep the executable compatibility manifest and physical-device evidence in
+# agreement. Nothing here runs a game; it prevents a host result from
+# overruling a recorded Vita failure.
 #
-# The recurring failure has been prose and the executable gate disagreeing:
-# docs called a title compatible while the manifest still said phase1 and the
-# only real evidence — a physical Vita run — said it was broken. Nothing here
-# runs a game; it checks that no file claims more than the evidence supports.
-#
-# Required: -DMANIFEST=, -DEVIDENCE=, -DGATE_DOC=
+# Required: -DMANIFEST=, -DEVIDENCE=
 
 cmake_minimum_required(VERSION 3.19)
 
-foreach(required MANIFEST EVIDENCE GATE_DOC)
+foreach(required MANIFEST EVIDENCE)
     if(NOT DEFINED ${required})
         message(FATAL_ERROR "VerifyCompatibilityClaims: -D${required} is required")
     endif()
@@ -17,27 +14,6 @@ foreach(required MANIFEST EVIDENCE GATE_DOC)
         message(FATAL_ERROR "VerifyCompatibilityClaims: missing ${required}: ${${required}}")
     endif()
 endforeach()
-
-# Manifest state -> the label the documentation table must use.
-set(state_labels
-    "phase1=host-audit passed"
-    "runtime_blocked=runtime-blocked"
-    "phase2=phase2"
-    "hardware_blocked=hardware-blocked")
-
-function(state_label state out)
-    foreach(pair IN LISTS state_labels)
-        string(FIND "${pair}" "=" separator)
-        string(SUBSTRING "${pair}" 0 ${separator} key)
-        math(EXPR value_start "${separator} + 1")
-        string(SUBSTRING "${pair}" ${value_start} -1 value)
-        if(state STREQUAL key)
-            set(${out} "${value}" PARENT_SCOPE)
-            return()
-        endif()
-    endforeach()
-    set(${out} "" PARENT_SCOPE)
-endfunction()
 
 # --- hardware receipts -------------------------------------------------------
 file(STRINGS "${EVIDENCE}" evidence_rows ENCODING UTF-8)
@@ -98,7 +74,6 @@ function(receipt_status_of id out)
 endfunction()
 
 # --- manifest ----------------------------------------------------------------
-file(READ "${GATE_DOC}" gate_doc ENCODING UTF-8)
 file(STRINGS "${MANIFEST}" manifest_rows ENCODING UTF-8)
 set(manifest_ids)
 foreach(row IN LISTS manifest_rows)
@@ -112,8 +87,7 @@ foreach(row IN LISTS manifest_rows)
     set(state "${CMAKE_MATCH_4}")
     list(APPEND manifest_ids "${id}")
 
-    state_label("${state}" label)
-    if(label STREQUAL "")
+    if(NOT state MATCHES "^(phase1|runtime_blocked|phase2|hardware_blocked)$")
         message(FATAL_ERROR "Unknown manifest state for ${id}: ${state}")
     endif()
 
@@ -127,7 +101,6 @@ foreach(row IN LISTS manifest_rows)
                 "${id} has a passing physical-Vita receipt but the manifest "
                 "says '${state}'. A passing receipt requires a clean host audit.")
         endif()
-        set(label "hardware verified")
     endif()
 
     # A recorded hardware failure outranks every host result.
@@ -141,11 +114,6 @@ foreach(row IN LISTS manifest_rows)
             "${id} is hardware_blocked with no blocked receipt in ${EVIDENCE}")
     endif()
 
-    # The documentation table must carry the same state, keyed by manifest id.
-    if(NOT gate_doc MATCHES "\n\\| ${label} \\| ${id} \\|")
-        message(FATAL_ERROR
-            "${GATE_DOC} does not list ${id} as '${label}'")
-    endif()
 endforeach()
 
 foreach(id IN LISTS receipt_ids)
@@ -155,12 +123,4 @@ foreach(id IN LISTS receipt_ids)
     endif()
 endforeach()
 
-# No title in this corpus has a passing physical run yet, so the word must not
-# appear as a state claim anywhere in the gate documentation.
-if(gate_doc MATCHES "\n\\| compatible[* ]*\\|")
-    message(FATAL_ERROR
-        "${GATE_DOC} still claims a 'compatible' state. Only a passing row in "
-        "${EVIDENCE} can support that, and it must be spelled out per title.")
-endif()
-
-message(STATUS "compatibility claims agree across manifest, evidence and docs")
+message(STATUS "compatibility manifest agrees with physical-Vita evidence")

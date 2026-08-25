@@ -134,14 +134,23 @@ set(TTC_SCAN_CONTEXT "Embedded retail patch bundle")
 include("${CMAKE_CURRENT_LIST_DIR}/VerifyNoTtcPayload.cmake")
 unset(TTC_SCAN_ROOT)
 unset(TTC_SCAN_CONTEXT)
-foreach(sample_patch
-    "patch/ORCSOFT／DWARFSOFT/色情教団/patch.tjs"
-    "patch/ORCSOFT／DWARFSOFT/色情教団/xp3filter.tjs")
-    if(NOT EXISTS "${patch_check_dir}/${sample_patch}")
-        message(FATAL_ERROR
-            "Embedded patch bundle is missing sample contract file ${sample_patch}")
+file(GLOB_RECURSE bundled_patch_scripts LIST_DIRECTORIES FALSE
+    "${patch_check_dir}/patch/*.tjs")
+set(has_patch_script FALSE)
+set(has_filter_script FALSE)
+foreach(bundled_patch_script IN LISTS bundled_patch_scripts)
+    get_filename_component(bundled_patch_name
+        "${bundled_patch_script}" NAME)
+    if(bundled_patch_name STREQUAL "patch.tjs")
+        set(has_patch_script TRUE)
+    elseif(bundled_patch_name STREQUAL "xp3filter.tjs")
+        set(has_filter_script TRUE)
     endif()
 endforeach()
+if(NOT has_patch_script OR NOT has_filter_script)
+    message(FATAL_ERROR
+        "Embedded patch bundle lacks required patch and filter scripts")
+endif()
 
 file(REMOVE_RECURSE "${VERIFY_DIR}")
 message(STATUS

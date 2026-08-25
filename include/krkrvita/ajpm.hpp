@@ -11,8 +11,7 @@ namespace krkrvita {
 // AJPM ("AlphaMovie") is the container written by the AlphaMovie.dll Kirikiri
 // plug-in: a sequence of frames that each carry an 8-bit alpha plane and a
 // colour plane, so a game can play video with per-pixel transparency over its
-// layers. Dieselmine's Violated Hero III ships 47 of them, 523 MB, holding
-// every battle skill animation.
+// layers.
 //
 // The layout is not documented anywhere; it was recovered from the shipped
 // files and every claim below is checked by tests/test_ajpm.cpp:

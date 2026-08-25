@@ -3,5 +3,5 @@
 #define tTJSSpinLockHolder tTJSCriticalSectionHolder
 
 // Keep Yuri's MenuItem implementation, but bind it to the current Window ABI.
-#include "../../../vendor/krkrsdl2/external/krkrz/visual/WindowIntf.h"
-#include "../../../vendor/yuri/src/core/visual/win32/MenuItemImpl.cpp"
+#include "WindowIntf.h"
+#include "MenuItemImpl.cpp"

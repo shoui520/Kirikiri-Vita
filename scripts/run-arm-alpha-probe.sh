@@ -16,20 +16,28 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source_root=$(cd -- "$script_dir/.." && pwd)
 cxx=${KRKRVITA_ARM_CXX:-arm-linux-gnueabihf-g++}
 out=${KRKRVITA_ARM_PROBE_OUT:-$(mktemp -d)/krkrvita-arm-alpha}
+dependency_build=${KRKRVITA_DEPENDENCY_BUILD:-$source_root/build-arm-probe-deps}
 
 if ! command -v "$cxx" >/dev/null 2>&1; then
     echo "ARM cross compiler not found: $cxx" >&2
     exit 2
 fi
 
-visual=$source_root/vendor/yuri/src/core/visual
+yuri_source=$dependency_build/_deps/krkrvita_yuri-src
+if [ ! -f "$yuri_source/src/core/visual/tvpgl.cpp" ]; then
+    cmake -S "$source_root" -B "$dependency_build" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DKRKRVITA_BUILD_TESTS=OFF
+fi
+
+visual=$yuri_source/src/core/visual
 "$cxx" -O2 -std=c++20 -static -marm -march=armv7-a -mfpu=neon -mfloat-abi=hard \
     -I "$source_root/include" \
     -I "$visual" \
-    -I "$source_root/vendor/yuri/src/core/tjs2" \
-    -I "$source_root/vendor/yuri/src/core/base" \
-    -I "$source_root/vendor/yuri/src/core/utils" \
-    -I "$source_root/vendor/yuri/src/core/environ" \
+    -I "$yuri_source/src/core/tjs2" \
+    -I "$yuri_source/src/core/base" \
+    -I "$yuri_source/src/core/utils" \
+    -I "$yuri_source/src/core/environ" \
     -o "$out" \
     "$source_root/tests/test_yuri_arm_alpha.cpp" \
     "$visual/tvpgl.cpp" \

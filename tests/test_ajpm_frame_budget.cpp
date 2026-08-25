@@ -1,8 +1,8 @@
 // What an AJPM frame costs on a Cortex-A9, measured rather than guessed.
 //
-// AlphaMovie playback has a hard budget: Violated Hero III's movies are all
-// 30 fps, so everything an effect frame needs must fit in 33.3 ms alongside
-// the rest of the engine. The largest frames are 1024x768, and each one
+// AlphaMovie playback has a hard budget at 30 fps, so everything an effect
+// frame needs must fit in 33.3 ms alongside the rest of the engine. Large
+// frames can be 1024x768, and each one
 // carries a full-size 8-bit alpha plane compressed with zlib -- 768 KB of
 // inflate output per frame, 23 MB/s sustained.
 //

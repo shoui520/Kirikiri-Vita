@@ -10,7 +10,6 @@
 #include "krkrvita/retail_bootstrap.hpp"
 #include "krkrvita/vitagl_presenter.hpp"
 #include "krkrvita/vita_video_frame.hpp"
-#include "krkrvita/yuri_performance.hpp"
 #include "krkrvita/yuri_window_update_policy.hpp"
 #include "yuri_window_layer.hpp"
 
@@ -328,7 +327,6 @@ public:
         if (!window_) return;
         const bool full_exposure = krkrvita::yuri_needs_full_window_exposure(
             type == utEntire, present_texture_ != nullptr);
-        krkrvita_yuri_profile_window_update(full_exposure ? 1 : 0);
         if (!full_exposure) {
             static bool dirty_region_update_reported = false;
             if (!dirty_region_update_reported) {

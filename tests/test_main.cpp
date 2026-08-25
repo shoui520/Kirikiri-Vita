@@ -959,14 +959,6 @@ void test_yuri_engine_tick_pacer() {
               yuri_frame_delay_us(1000000, 1020000) == 0,
           "slow Yuri frame acquired an additional sleep delay");
 
-    check(!yuri_performance_snapshot_is_safe(4999999, 5000000, 0),
-          "performance snapshot ran before its deadline");
-    check(!yuri_performance_snapshot_is_safe(5200000, 5000000, 5000000),
-          "performance snapshot interrupted active rendering");
-    check(yuri_performance_snapshot_is_safe(5250000, 5000000, 5000000),
-          "performance snapshot did not run after a visual idle window");
-    check(!yuri_performance_snapshot_is_safe(5000000, 5000000, 5100000),
-          "performance snapshot accepted a clock-ordering violation");
 }
 
 void test_yuri_presentation_reference_contract() {
@@ -1143,16 +1135,13 @@ void test_deferred_recycle_fixed_point() {
 }
 
 void test_vita_executable_name_contract() {
-    // The real layout of "ダメダメなボクに舞い降りた全肯定ママ女神": two
-    // executables, and only the engine one is paired with a .cf. Its
-    // script/first.ks exits unless chopStorageExt(System.exeName) + ".cf"
-    // resolves, so picking the tool here is a refusal to boot.
-    const std::vector<std::u16string> allokmama = {
-        u"allokmama.cf",   u"allokmama.exe", u"bgm.xp3",
-        u"data.xp3",       u"krmovie.dll",   u"xp3dec.tpm",
-        u"ファイル破損チェックツール.exe",
-        u"ファイル破損チェックツール.ini"};
-    check(vita_select_executable_name(allokmama) == u"allokmama.exe",
+    // When two executables are present, the engine one is identified by its
+    // matching .cf sibling. Selecting the unrelated tool would prevent boot.
+    const std::vector<std::u16string> sample_application = {
+        u"sample.cf", u"sample.exe", u"bgm.xp3", u"data.xp3",
+        u"movie.dll", u"filter.tpm", u"integrity-check.exe",
+        u"integrity-check.ini"};
+    check(vita_select_executable_name(sample_application) == u"sample.exe",
           "the .cf sibling did not identify the game executable");
 
     // A single executable is unambiguous even with no config file.
@@ -1285,34 +1274,34 @@ void test_empty_yuri_string() {
 }
 
 void test_normalize() {
-    check(normalize_game_name(" ＡＢＣ／色情・教団！ ") == "abc色情教団",
+    check(normalize_game_name(" ＡＢＣ／例示・作品！ ") == "abc例示作品",
           "game title normalization failed");
 }
 
 void test_vita_storage_paths() {
     constexpr std::u16string_view game =
-        u"ux0:data/krkrvita/games/色情教団";
+        u"ux0:data/krkrvita/games/example-project";
     constexpr std::u16string_view patch =
         u"ux0:data/krkrvita/patches/44bb539bf9510882/patch.tjs";
 
     check(vita_native_to_storage_path(game) ==
-              u"file://./ux0:data/krkrvita/games/色情教団",
+              u"file://./ux0:data/krkrvita/games/example-project",
           "Vita game path normalized to the wrong Kirikiri URI");
     check(vita_storage_to_native_path(
-              u"file://./ux0:data/krkrvita/games/色情教団/data.xp3") ==
-              u"ux0:data/krkrvita/games/色情教団/data.xp3",
+              u"file://./ux0:data/krkrvita/games/example-project/data.xp3") ==
+              u"ux0:data/krkrvita/games/example-project/data.xp3",
           "Kirikiri URI did not round-trip to a Vita device path");
     check(vita_storage_to_native_path(
-              u"./ux0:/data/krkrvita/games/色情教団/data.xp3") ==
-              u"ux0:data/krkrvita/games/色情教団/data.xp3",
+              u"./ux0:/data/krkrvita/games/example-project/data.xp3") ==
+              u"ux0:data/krkrvita/games/example-project/data.xp3",
           "legacy slash-after-device path was not canonicalized");
     check(vita_storage_to_native_path(vita_native_to_storage_path(patch)) == patch,
           "retail patch path did not round-trip exactly");
     check(vita_directory_path(game) ==
-              u"ux0:data/krkrvita/games/色情教団/",
-          "project directory lost the Japanese game component");
+              u"ux0:data/krkrvita/games/example-project/",
+          "project directory lost the selected game component");
     check(vita_directory_path(game) + u"savedata/" ==
-              u"ux0:data/krkrvita/games/色情教団/savedata/",
+              u"ux0:data/krkrvita/games/example-project/savedata/",
           "savedata escaped the selected game directory");
     check(vita_device_prefix_length(u"file://./ux0:data") == 0,
           "storage URI was mistaken for a native Vita path");
@@ -1320,14 +1309,15 @@ void test_vita_storage_paths() {
 
 void test_virtual_cd() {
     using krkrvita::virtual_cd_is_present;
-    check(!virtual_cd_is_present("", "ux0:data/krkrvita/games/sharin"),
+    check(!virtual_cd_is_present("", "ux0:data/krkrvita/games/example-project"),
           "empty CD labels must remain absent");
-    check(!virtual_cd_is_present("syarin", ""),
+    check(!virtual_cd_is_present("disc-one", ""),
           "a missing project cannot satisfy a virtual CD check");
-    check(virtual_cd_is_present("syarin", "ux0:data/krkrvita/games/sharin"),
+    check(virtual_cd_is_present(
+              "disc-one", "ux0:data/krkrvita/games/example-project"),
           "mounted Vita projects must satisfy non-empty CD labels");
     check(virtual_cd_is_present("任意のボリューム",
-                                "file://./ux0:data/krkrvita/games/sharin"),
+              "file://./ux0:data/krkrvita/games/example-project"),
           "virtual CD labels are not limited to ASCII");
 }
 
@@ -1506,21 +1496,22 @@ void test_vita_touch_mapping() {
 void test_manifest_and_resolver() {
     constexpr auto source = R"JS(
       var all_data = [
-        [1520434816, "ORCSOFT／DWARFSOFT", "色情教団", "色情教団",
-          ["ORCSOFT／DWARFSOFT/色情教団/patch.tjs",
-           "ORCSOFT／DWARFSOFT/色情教団/xp3filter.tjs"]],
+        [100, "Example Studio", "Sample Project", "Sample Project",
+          ["Example Studio/Sample Project/patch.tjs",
+           "Example Studio/Sample Project/xp3filter.tjs"]],
         [1, "Other", "Different Game", "Different Game", ["Other/xp3filter.tjs"]]
       ];
     )JS";
     const auto manifest = PatchManifest::parse(source);
     check(manifest.entries().size() == 2, "manifest entry count failed");
     GameDescriptor game;
-    game.directory_name = "色情教団";
+    game.directory_name = "Sample Project";
     game.display_name = game.directory_name;
-    game.executable_stem = "sikijokyodan";
+    game.executable_stem = "sample-project";
     const auto resolution = PatchResolver::resolve(game, manifest);
     check(resolution.automatic, "sample patch was not selected automatically");
-    check(resolution.best() && resolution.best()->entry->brand == "ORCSOFT／DWARFSOFT",
+    check(resolution.best() &&
+              resolution.best()->entry->brand == "Example Studio",
           "wrong patch selected");
     check(is_safe_patch_path("Brand/Game/xp3filter.tjs"), "safe patch rejected");
     check(!is_safe_patch_path("../xp3filter.tjs"), "traversal patch accepted");
@@ -2742,7 +2733,7 @@ void test_retail_sample(const std::filesystem::path& game_path,
     const auto resolution = PatchResolver::resolve(game, manifest);
     check(resolution.automatic && resolution.best(),
           "retail sample patch did not resolve automatically");
-    check(resolution.best()->entry->canonical_title == "色情教団",
+    check(resolution.best()->entry->canonical_title == game.directory_name,
           "retail sample resolved to the wrong patch");
 
     std::filesystem::path filter_path;

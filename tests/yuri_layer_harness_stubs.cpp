@@ -43,16 +43,12 @@ tjs_uint32 TVPFromActualColor(tjs_uint32 color) { return color; }
 tjs_uint32 TVPGetTickCount() { return 0; }
 void TVPStartTickCount() {}
 
-// --- Vita profiling and damage hooks: no-ops ------------------------------
+// --- Vita damage hooks: no-ops --------------------------------------------
 
 extern "C" void krkrvita_yuri_begin_frame_damage(tjs_int, tjs_int) {}
 extern "C" void krkrvita_yuri_add_frame_damage(tjs_int, tjs_int, tjs_int, tjs_int) {}
-extern "C" unsigned long long krkrvita_yuri_profile_now_us() { return 0; }
-extern "C" void krkrvita_yuri_profile_compositor(unsigned long long,
-                                                 unsigned long long,
-                                                 unsigned long long) {}
 
-// Message globals are NOT defined here. vendor/yuri/src/core/msg/MsgIntf.cpp
+// Message globals are NOT defined here. Yuri's src/core/msg/MsgIntf.cpp
 // defines all of them as tTJSMessageHolder via the TVP_MSG_DECL_CONST macro;
 // hand-declaring them as ttstr produces conflicting-declaration errors. Link
 // MsgIntf.cpp instead.

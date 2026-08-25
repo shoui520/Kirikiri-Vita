@@ -64,7 +64,7 @@ public:
         }
         // The string and resource payload regions are bases that entries index
         // into, not tables. An empty region legitimately begins one past the
-        // last byte, which is how every Noble Works scene state is encoded:
+        // last byte, which is how some retail scene states are encoded:
         // no embedded resources, so offsetChunkData == the document size.
         // Individual reads are still bounds-checked against the payload.
         const std::uint32_t data_offsets[] = {

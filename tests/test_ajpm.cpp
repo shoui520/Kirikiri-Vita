@@ -4,9 +4,8 @@
 // of shipped files and this test is what keeps that reading honest.
 //
 // Synthetic fixtures pin the structural contract and the fail-closed paths.
-// When an installed copy of Violated Hero III is present, every frame of every
-// shipped movie is walked as well -- 47 files, the real proof that the layout
-// is right rather than merely self-consistent.
+// An explicitly configured external corpus can also walk shipped frames, which
+// proves that the layout is right rather than merely self-consistent.
 
 #include "krkrvita/ajpm.hpp"
 #include "krkrvita/phase1_filter.hpp"
@@ -286,14 +285,17 @@ void test_malformed_files_fail_closed() {
     }
 }
 
-// The shipped corpus. Everything above proves the parser is self-consistent;
-// only this proves the layout matches what AlphaMovie.dll actually wrote.
-void test_installed_corpus() {
-    const std::string game = "/mnt/j/dieselmine/violatedhero3";
-    if (!std::filesystem::is_directory(game)) {
-        std::cout << "installed corpus not present; structural checks only\n";
+// Everything above proves the parser is self-consistent; an optional external
+// corpus proves the layout matches what AlphaMovie.dll actually wrote.
+void test_external_corpus() {
+    const char* corpus = std::getenv("KRKRVITA_TEST_AJPM_GAME_DIR");
+    if (!corpus || !*corpus) {
+        std::cout << "external corpus not configured; structural checks only\n";
         return;
     }
+    const std::string game = corpus;
+    require(std::filesystem::is_directory(game),
+            "external AJPM corpus directory is missing");
     std::string error;
     const auto phase1 = infer_phase1_filter(game, &error);
     require(phase1.has_value(), "the game's extraction filter is recovered: " +
@@ -363,7 +365,7 @@ int main() {
         test_rebuilt_jpeg_structure();
         test_entropy_is_restuffed();
         test_malformed_files_fail_closed();
-        test_installed_corpus();
+        test_external_corpus();
     } catch (const std::exception& exception) {
         std::cerr << "FAIL: unexpected exception: " << exception.what() << '\n';
         ++failures;

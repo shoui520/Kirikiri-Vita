@@ -10,7 +10,7 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source_root=$(cd -- "$script_dir/.." && pwd)
 bundle=$(realpath -- "$1")
 arm_build=${KRKRVITA_ARM_BUILD_DIR:-$source_root/build-arm-host}
-board_wrapper=${KRKRVITA_A9_WRAPPER:-/home/shoui/ps2vita/src/vitasx2-ng/tools/run_cortex_a9_board.sh}
+board_wrapper=${KRKRVITA_A9_WRAPPER:?Set KRKRVITA_A9_WRAPPER to the board runner}
 runner=$arm_build/krkrvita-retail-armv7-runtime
 build_jobs=${KRKRVITA_BUILD_JOBS:-12}
 

@@ -51,7 +51,7 @@ tjs_int TVPGetThreadNum() { return 1; }
 // --- Error reporting ------------------------------------------------------
 
 // TVPThrowExceptionMessage and the message-string globals come from
-// vendor/yuri/src/core/msg/MsgIntf.cpp, which both harnesses link. Defining
+// Yuri's src/core/msg/MsgIntf.cpp, which both harnesses link. Defining
 // them here as well is a multiple-definition link error, and defining the
 // globals as ttstr rather than tTJSMessageHolder is a type conflict.
 

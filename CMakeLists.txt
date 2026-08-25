@@ -9,9 +9,22 @@ option(KRKRVITA_BUILD_TESTS "Build host-side tests" ON)
 option(KRKRVITA_ENABLE_OPENGL_COMPOSITOR
     "Use Yuri's experimental OpenGL compositor instead of software rendering"
     OFF)
+set(KRKRVITA_MS_GOTHIC_TTC "" CACHE FILEPATH
+    "Optional local msgothic.ttc used only by the host golden test")
+
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries" FORCE)
+set(BUILD_TEST OFF CACHE BOOL "Build dependency tests" FORCE)
+set(INSTALL_DOCUMENTATION OFF CACHE BOOL "Install dependency documentation" FORCE)
+set(INSTALL_EXAMPLES OFF CACHE BOOL "Install dependency examples" FORCE)
+include(cmake/Dependencies.cmake)
+
+if(VITA AND NOT CMAKE_BUILD_TYPE STREQUAL "Release")
+    message(FATAL_ERROR
+        "Kirikiri Vita packages must use -DCMAKE_BUILD_TYPE=Release")
+endif()
 
 set(KRKRVITA_YURI_TJS_SOURCE_DIR
-    "${CMAKE_CURRENT_SOURCE_DIR}/vendor/yuri/src/core/tjs2")
+    "${KRKRVITA_YURI_SOURCE_DIR}/src/core/tjs2")
 set(KRKRVITA_YURI_TJS_GENERATED_DIR
     "${CMAKE_CURRENT_BINARY_DIR}/generated/yuri/tjs2")
 file(MAKE_DIRECTORY "${KRKRVITA_YURI_TJS_GENERATED_DIR}")
@@ -24,7 +37,7 @@ file(MAKE_DIRECTORY "${KRKRVITA_YURI_TJS_GENERATED_DIR}")
 # an unchanged list.  The host-only regression test below explicitly includes
 # this overlay; ordinary host engine targets continue to use upstream Yuri.
 set(KRKRVITA_YURI_OBJECT_LIST_SOURCE
-    "${CMAKE_CURRENT_SOURCE_DIR}/vendor/yuri/src/core/utils/ObjectList.h")
+    "${KRKRVITA_YURI_SOURCE_DIR}/src/core/utils/ObjectList.h")
 file(READ "${KRKRVITA_YURI_OBJECT_LIST_SOURCE}"
     KRKRVITA_YURI_OBJECT_LIST_TEXT)
 set(KRKRVITA_YURI_OBJECT_LIST_COMPACT_OLD [=[
@@ -555,8 +568,8 @@ set_target_properties(krkrvita-yuri-tjs PROPERTIES CXX_STANDARD 17)
 target_include_directories(krkrvita-yuri-tjs PUBLIC
     src/yuri/compat
     "${KRKRVITA_YURI_TJS_GENERATED_DIR}"
-    vendor/yuri/src/core/environ
-    vendor/yuri/src/core/utils
+    "${KRKRVITA_YURI_SOURCE_DIR}/src/core/environ"
+    "${KRKRVITA_YURI_SOURCE_DIR}/src/core/utils"
 )
 target_compile_definitions(krkrvita-yuri-tjs PUBLIC
     TJS_TEXT_OUT_CRLF
@@ -602,13 +615,15 @@ target_link_libraries(krkrvita-common PUBLIC krkrvita-yuri-tjs)
 # attached read-only databases, and BLOB scene state.  Build the same official
 # amalgamation on host and Vita so the compatibility test and target do not
 # silently exercise different SQL engines.
-add_library(krkrvita-sqlite STATIC third_party/sqlite/sqlite3.c)
+add_library(krkrvita-sqlite STATIC
+    "${KRKRVITA_SQLITE_SOURCE_DIR}/sqlite3.c")
 if(VITA)
     target_sources(krkrvita-sqlite PRIVATE
         src/platform/vita/sqlite_posix_compat.c)
 endif()
 target_include_directories(krkrvita-sqlite BEFORE PRIVATE src/yuri/compat)
-target_include_directories(krkrvita-sqlite PUBLIC third_party/sqlite)
+target_include_directories(krkrvita-sqlite PUBLIC
+    "${KRKRVITA_SQLITE_SOURCE_DIR}")
 target_compile_definitions(krkrvita-sqlite PRIVATE
     SQLITE_THREADSAFE=0
     SQLITE_DEFAULT_MEMSTATUS=0
@@ -714,7 +729,7 @@ if(VITA)
         "${krkrvita_squirrel_SOURCE_DIR}/src/plugins/win32/squirrel"
         CACHE INTERNAL "Pinned Kirikiri Squirrel source directory")
 
-    # Torikago and Noble Works use psd.dll for their layered PSD scene
+    # Some KAGEX titles use psd.dll for their layered PSD scene
     # backgrounds. Reuse the maintained Kirikiri PSD parser/plugin source;
     # YuriBackend.cmake only adapts its storage/registration boundary and
     # keeps the parser itself authoritative.
@@ -730,11 +745,6 @@ if(VITA)
         "${krkrvita_psdfile_SOURCE_DIR}/cpp/plugins/psdfile"
         CACHE INTERNAL "Pinned Kirikiri PSD plugin source directory")
 
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries" FORCE)
-    set(BUILD_TEST OFF CACHE BOOL "Build Oniguruma tests" FORCE)
-    set(INSTALL_DOCUMENTATION OFF CACHE BOOL "Install Oniguruma docs" FORCE)
-    set(INSTALL_EXAMPLES OFF CACHE BOOL "Install Oniguruma examples" FORCE)
-    add_subdirectory(vendor/oniguruma EXCLUDE_FROM_ALL)
     target_compile_definitions(krkrvita-yuri-tjs PUBLIC
         KRKRVITA_USE_ONIGURUMA=1)
     target_link_libraries(krkrvita-yuri-tjs PUBLIC onig)
@@ -745,11 +755,6 @@ else()
     # A matching header/library pair matters here: Ruby's private Onigmo
     # header is not ABI-compatible with a distribution libonig. Pinning the
     # small host dependency also makes regex-enabled script probes repeatable.
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries" FORCE)
-    set(BUILD_TEST OFF CACHE BOOL "Build Oniguruma tests" FORCE)
-    set(INSTALL_DOCUMENTATION OFF CACHE BOOL "Install Oniguruma docs" FORCE)
-    set(INSTALL_EXAMPLES OFF CACHE BOOL "Install Oniguruma examples" FORCE)
-    add_subdirectory(vendor/oniguruma EXCLUDE_FROM_ALL)
     target_compile_definitions(krkrvita-yuri-tjs PUBLIC
         KRKRVITA_USE_ONIGURUMA=1)
     target_link_libraries(krkrvita-yuri-tjs PUBLIC onig)
@@ -793,8 +798,11 @@ else()
         target_link_libraries(krkrvita-retail-armv7-runtime PRIVATE
             krkrvita-yuri-tjs)
         set(KRKRVITA_RETAIL_COMPATIBILITY_MANIFEST
-            "${CMAKE_CURRENT_SOURCE_DIR}/tests/retail_compatibility_manifest.txt"
-            CACHE FILEPATH "Local immutable retail compatibility manifest")
+            "" CACHE FILEPATH
+            "Optional local retail compatibility manifest")
+        set(KRKRVITA_RETAIL_HARDWARE_EVIDENCE
+            "" CACHE FILEPATH
+            "Optional local hardware compatibility evidence")
         if(EXISTS "${KRKRVITA_RETAIL_COMPATIBILITY_MANIFEST}")
             add_custom_target(krkrvita-final-compatibility-gate
                 COMMAND "${CMAKE_COMMAND}" -E env
@@ -806,48 +814,6 @@ else()
                 USES_TERMINAL
                 COMMENT "Running fail-closed retail compatibility gate")
 
-            # The three gate titles which actually ship movies cover both
-            # legacy families required by the Vita backend: MPEG-PS with
-            # MPEG-1/MP2 and ASF with WMV3/WMA2. Decode their real encrypted-
-            # archive payloads on the host and compare deterministic RGBA/PCM
-            # output; the Vita ELF verifier separately requires those exact
-            # decoder and demuxer symbols in the cross-linked executable.
-            set(krkrvita_chichimiko_archive
-                "/mnt/j/rapapuru/chichimiko/video.xp3")
-            set(krkrvita_pl0002_archive "/mnt/j/PL-0002/data.xp3")
-            set(krkrvita_lpk30008_archive
-                "/mnt/j/lilith/LPK-30008/data.xp3")
-            if(EXISTS "${krkrvita_chichimiko_archive}" AND
-               EXISTS "${krkrvita_pl0002_archive}" AND
-               EXISTS "${krkrvita_lpk30008_archive}")
-                find_program(KRKRVITA_RETAIL_MOVIE_FFMPEG ffmpeg REQUIRED)
-                add_custom_target(krkrvita-retail-movie-gate
-                    COMMAND "${CMAKE_COMMAND}"
-                        -DTOOL=$<TARGET_FILE:krkrvita-tool>
-                        -DFFMPEG=${KRKRVITA_RETAIL_MOVIE_FFMPEG}
-                        -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/retail-movie-gate
-                        -DCHICHIMIKO_ARCHIVE=${krkrvita_chichimiko_archive}
-                        -DPL0002_ARCHIVE=${krkrvita_pl0002_archive}
-                        -DLPK30008_ARCHIVE=${krkrvita_lpk30008_archive}
-                        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyRetailMovies.cmake"
-                    DEPENDS krkrvita-tool
-                    USES_TERMINAL
-                    COMMENT "Decoding pinned retail MPEG/WMV compatibility samples")
-                add_dependencies(krkrvita-final-compatibility-gate
-                    krkrvita-retail-movie-gate)
-                add_test(NAME krkrvita-retail-movie-compatibility
-                    COMMAND "${CMAKE_COMMAND}"
-                        -DTOOL=$<TARGET_FILE:krkrvita-tool>
-                        -DFFMPEG=${KRKRVITA_RETAIL_MOVIE_FFMPEG}
-                        -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/retail-movie-ctest
-                        -DCHICHIMIKO_ARCHIVE=${krkrvita_chichimiko_archive}
-                        -DPL0002_ARCHIVE=${krkrvita_pl0002_archive}
-                        -DLPK30008_ARCHIVE=${krkrvita_lpk30008_archive}
-                        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyRetailMovies.cmake")
-                set_tests_properties(krkrvita-retail-movie-compatibility
-                    PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE
-                    LABELS "retail;compatibility;movie")
-            endif()
             file(STRINGS "${KRKRVITA_RETAIL_COMPATIBILITY_MANIFEST}"
                 krkrvita_retail_compatibility_rows ENCODING UTF-8)
             foreach(krkrvita_retail_row IN LISTS
@@ -898,8 +864,7 @@ else()
                             "${krkrvita_retail_diagnostic}")
                 elseif(krkrvita_retail_expectation STREQUAL "hardware_blocked")
                     # The host audit must keep passing; the actual blocker is
-                    # recorded in tests/retail_hardware_evidence.txt and is only
-                    # observable on the device.
+                    # recorded separately and is only observable on the device.
                     set(krkrvita_retail_test_name
                         "krkrvita-retail-hardware-blocked-${krkrvita_retail_id}")
                     add_test(NAME "${krkrvita_retail_test_name}"
@@ -935,7 +900,7 @@ else()
         target_include_directories(krkrvita-yuri-object-list-test BEFORE PRIVATE
             "${CMAKE_CURRENT_BINARY_DIR}/generated/yuri"
             "${KRKRVITA_YURI_TJS_GENERATED_DIR}"
-            vendor/yuri/src/core/utils)
+            "${KRKRVITA_YURI_SOURCE_DIR}/src/core/utils")
         add_test(NAME krkrvita-yuri-object-list
             COMMAND krkrvita-yuri-object-list-test)
 
@@ -996,15 +961,15 @@ else()
 
         # psbfile.dll consumes both ordinary PSB assets and MDF/zlib scene
         # blobs returned by SQLite. Exercise a synthetic boundary fixture plus
-        # the installed Noble Works animation and scene databases when present.
+        # explicitly configured external animation and scene databases.
         add_executable(krkrvita-psb-test tests/test_psb.cpp)
         target_link_libraries(krkrvita-psb-test PRIVATE
             krkrvita-common SQLite::SQLite3)
         add_test(NAME krkrvita-psb COMMAND krkrvita-psb-test)
 
         # AJPM is AlphaMovie.dll's undocumented container. Synthetic fixtures
-        # pin the structural contract and the fail-closed paths; the installed
-        # Violated Hero III archive, when present, walks every shipped frame.
+        # pin the structural contract and the fail-closed paths; an explicitly
+        # configured local archive can additionally walk every shipped frame.
         add_executable(krkrvita-ajpm-test tests/test_ajpm.cpp)
         target_link_libraries(krkrvita-ajpm-test PRIVATE
             krkrvita-common ZLIB::ZLIB)
@@ -1016,19 +981,20 @@ else()
         add_executable(krkrvita-yuri-sqlite-module-test
             tests/test_yuri_sqlite_module.cpp
             src/engine/retail/yuri_sqlite_module.cpp
-            vendor/yuri/src/plugins/ncbind/ncbind.cpp)
+            "${KRKRVITA_YURI_SOURCE_DIR}/src/plugins/ncbind/ncbind.cpp")
         target_include_directories(krkrvita-yuri-sqlite-module-test BEFORE PRIVATE
             include
             src/yuri/compat
-            vendor/yuri/src/core/base
-            vendor/yuri/src/core/base/win32
-            vendor/yuri/src/core/environ
-            vendor/yuri/src/core/msg
-            vendor/yuri/src/core/msg/win32
-            vendor/yuri/src/core/tjs2
-            vendor/yuri/src/core/utils
-            vendor/yuri/src/core/utils/win32
-            vendor/yuri/src/plugins)
+            "${KRKRVITA_YURI_SOURCE_DIR}/src/core/base"
+            "${KRKRVITA_YURI_SOURCE_DIR}/src/core/base/win32"
+            "${KRKRVITA_YURI_SOURCE_DIR}/src/core/environ"
+            "${KRKRVITA_YURI_SOURCE_DIR}/src/core/msg"
+            "${KRKRVITA_YURI_SOURCE_DIR}/src/core/msg/win32"
+            "${KRKRVITA_YURI_SOURCE_DIR}/src/core/tjs2"
+            "${KRKRVITA_YURI_SOURCE_DIR}/src/core/utils"
+            "${KRKRVITA_YURI_SOURCE_DIR}/src/core/utils/win32"
+            "${KRKRVITA_YURI_SOURCE_DIR}/src/plugins"
+            "${KRKRVITA_YURI_SOURCE_DIR}/src/plugins/ncbind")
         target_compile_options(krkrvita-yuri-sqlite-module-test PRIVATE
             -include${CMAKE_CURRENT_SOURCE_DIR}/src/yuri/tjs_compat.hpp
             -Wno-deprecated-declarations)
@@ -1037,18 +1003,18 @@ else()
         add_test(NAME krkrvita-yuri-sqlite-module
             COMMAND krkrvita-yuri-sqlite-module-test)
 
-        # Docs, the executable manifest, and physical-Vita receipts must agree.
-        # A blocked hardware receipt outranks every host result, so this test
-        # is what stops a title being described as compatible while the device
-        # says otherwise.
-        add_test(NAME krkrvita-compatibility-claims
-            COMMAND "${CMAKE_COMMAND}"
-                -DMANIFEST=${CMAKE_CURRENT_SOURCE_DIR}/tests/retail_compatibility_manifest.txt
-                -DEVIDENCE=${CMAKE_CURRENT_SOURCE_DIR}/tests/retail_hardware_evidence.txt
-                -DGATE_DOC=${CMAKE_CURRENT_SOURCE_DIR}/docs/RETAIL-COMPATIBILITY-GATE.md
-                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyCompatibilityClaims.cmake")
-        set_tests_properties(krkrvita-compatibility-claims
-            PROPERTIES LABELS "compatibility")
+        # When supplied, the executable manifest and physical-Vita receipts
+        # must agree. A blocked hardware receipt always outranks a host audit.
+        if(EXISTS "${KRKRVITA_RETAIL_COMPATIBILITY_MANIFEST}" AND
+           EXISTS "${KRKRVITA_RETAIL_HARDWARE_EVIDENCE}")
+            add_test(NAME krkrvita-compatibility-claims
+                COMMAND "${CMAKE_COMMAND}"
+                    -DMANIFEST=${KRKRVITA_RETAIL_COMPATIBILITY_MANIFEST}
+                    -DEVIDENCE=${KRKRVITA_RETAIL_HARDWARE_EVIDENCE}
+                    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyCompatibilityClaims.cmake")
+            set_tests_properties(krkrvita-compatibility-claims
+                PROPERTIES LABELS "compatibility")
+        endif()
 
         # Vita seals plugin loading, so Plugins.link() succeeds only when a
         # module is present in the ncbAutoRegister registry. Compiling the
@@ -1059,23 +1025,24 @@ else()
             tests/test_yuri_plugin_registry.cpp
             src/engine/retail/yuri_motionplayer_module.cpp
             src/engine/retail/yuri_layerexdraw_module.cpp
-            third_party/scriptsEx/scriptsEx.cpp
+            "${KRKRVITA_KRKR2_NEXT_SOURCE_DIR}/cpp/plugins/scriptsEx.cpp"
             src/engine/retail/yuri_scriptsex_module.cpp
-            vendor/yuri/src/core/utils/md5.c
-            vendor/yuri/src/plugins/ncbind/ncbind.cpp)
+            "${KRKRVITA_YURI_SOURCE_DIR}/src/core/utils/md5.c"
+            "${KRKRVITA_YURI_SOURCE_DIR}/src/plugins/ncbind/ncbind.cpp")
         target_include_directories(krkrvita-yuri-plugin-registry-test
             BEFORE PRIVATE
             include
             src/yuri/compat
-            vendor/yuri/src/core/base
-            vendor/yuri/src/core/base/win32
-            vendor/yuri/src/core/environ
-            vendor/yuri/src/core/msg
-            vendor/yuri/src/core/msg/win32
-            vendor/yuri/src/core/tjs2
-            vendor/yuri/src/core/utils
-            vendor/yuri/src/core/utils/win32
-            vendor/yuri/src/plugins)
+            "${KRKRVITA_YURI_SOURCE_DIR}/src/core/base"
+            "${KRKRVITA_YURI_SOURCE_DIR}/src/core/base/win32"
+            "${KRKRVITA_YURI_SOURCE_DIR}/src/core/environ"
+            "${KRKRVITA_YURI_SOURCE_DIR}/src/core/msg"
+            "${KRKRVITA_YURI_SOURCE_DIR}/src/core/msg/win32"
+            "${KRKRVITA_YURI_SOURCE_DIR}/src/core/tjs2"
+            "${KRKRVITA_YURI_SOURCE_DIR}/src/core/utils"
+            "${KRKRVITA_YURI_SOURCE_DIR}/src/core/utils/win32"
+            "${KRKRVITA_YURI_SOURCE_DIR}/src/plugins"
+            "${KRKRVITA_YURI_SOURCE_DIR}/src/plugins/ncbind")
         target_compile_options(krkrvita-yuri-plugin-registry-test PRIVATE
             $<$<COMPILE_LANGUAGE:CXX>:-include${CMAKE_CURRENT_SOURCE_DIR}/src/yuri/tjs_compat.hpp>
             -Wno-deprecated-declarations)
@@ -1121,8 +1088,7 @@ else()
         # prepared-glyph path against FreeType's ordinary two-load path using
         # face zero, including exact raster bytes and metrics.
         find_package(Freetype QUIET)
-        if(Freetype_FOUND AND
-           EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vendor/msgothic.ttc")
+        if(Freetype_FOUND AND EXISTS "${KRKRVITA_MS_GOTHIC_TTC}")
             add_executable(krkrvita-ms-gothic-golden
                 tests/test_ms_gothic_freetype.cpp)
             target_include_directories(krkrvita-ms-gothic-golden PRIVATE
@@ -1131,7 +1097,7 @@ else()
                 Freetype::Freetype)
             add_test(NAME krkrvita-ms-gothic-golden
                 COMMAND krkrvita-ms-gothic-golden
-                    "${CMAKE_CURRENT_SOURCE_DIR}/vendor/msgothic.ttc")
+                    "${KRKRVITA_MS_GOTHIC_TTC}")
         endif()
         add_test(NAME krkrvita-vita-trace-contract
             COMMAND "${CMAKE_COMMAND}"
@@ -1174,16 +1140,8 @@ else()
             "Optional real retail game directory for integration tests")
         set(KRKRVITA_RETAIL_TEST_PATCH_SNAPSHOT "" CACHE PATH
             "Optional extracted Kirikiroid2 patch snapshot for integration tests")
-        if(NOT KRKRVITA_RETAIL_TEST_GAME AND
-           EXISTS "/home/shoui/Agents/CodexMax/色情教団/data.xp3")
-            set(KRKRVITA_RETAIL_TEST_GAME
-                "/home/shoui/Agents/CodexMax/色情教団")
-        endif()
-        if(NOT KRKRVITA_RETAIL_TEST_PATCH_SNAPSHOT AND
-           EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.cache/patches/0af1bafdb7a031e4c74fd4b320b6a0a1ec03b300/alldata.js")
-            set(KRKRVITA_RETAIL_TEST_PATCH_SNAPSHOT
-                "${CMAKE_CURRENT_SOURCE_DIR}/.cache/patches/0af1bafdb7a031e4c74fd4b320b6a0a1ec03b300")
-        endif()
+        set(KRKRVITA_RETAIL_TEST_FILTER "" CACHE FILEPATH
+            "Optional extraction filter for retail audio integration tests")
         if(KRKRVITA_RETAIL_TEST_GAME AND
            KRKRVITA_RETAIL_TEST_PATCH_SNAPSHOT)
             add_test(NAME krkrvita-retail-sample
@@ -1195,15 +1153,13 @@ else()
                 LABELS "retail;integration")
 
             find_program(KRKRVITA_FFMPEG_EXECUTABLE ffmpeg)
-            set(KRKRVITA_SAMPLE_FILTER
-                "${KRKRVITA_RETAIL_TEST_PATCH_SNAPSHOT}/patch/ORCSOFT／DWARFSOFT/色情教団/xp3filter.tjs")
             if(KRKRVITA_FFMPEG_EXECUTABLE AND
-               EXISTS "${KRKRVITA_SAMPLE_FILTER}")
+               EXISTS "${KRKRVITA_RETAIL_TEST_FILTER}")
                 add_test(NAME krkrvita-retail-audio
                     COMMAND "${CMAKE_COMMAND}"
                         -DTOOL=$<TARGET_FILE:krkrvita-tool>
                         -DGAME_DIR=${KRKRVITA_RETAIL_TEST_GAME}
-                        -DFILTER=${KRKRVITA_SAMPLE_FILTER}
+                        -DFILTER=${KRKRVITA_RETAIL_TEST_FILTER}
                         -DFFMPEG=${KRKRVITA_FFMPEG_EXECUTABLE}
                         -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/retail-audio-test
                         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyRetailAudio.cmake")

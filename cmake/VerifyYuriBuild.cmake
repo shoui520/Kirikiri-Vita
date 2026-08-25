@@ -7,6 +7,12 @@ endif()
 if(NOT DEFINED SOURCE_DIR OR NOT IS_DIRECTORY "${SOURCE_DIR}")
     message(FATAL_ERROR "Yuri contract check has no source directory")
 endif()
+if(NOT DEFINED YURI_SOURCE_DIR OR NOT IS_DIRECTORY "${YURI_SOURCE_DIR}")
+    message(FATAL_ERROR "Yuri contract check has no fetched Yuri source directory")
+endif()
+if(NOT DEFINED KRKR2_SOURCE_DIR OR NOT IS_DIRECTORY "${KRKR2_SOURCE_DIR}")
+    message(FATAL_ERROR "Yuri contract check has no fetched KrKr2-Next source directory")
+endif()
 
 function(require_text file needle description)
     if(NOT EXISTS "${file}")
@@ -451,9 +457,9 @@ require_text("${GENERATED_DIR}/LayerBitmapImpl.cpp"
 forbid_text("${GENERATED_DIR}/LayerBitmapImpl.cpp"
     "#include \"visual/FreeType.h\""
     "LayerBitmapImpl must not bypass the generated FreeType overlay")
-require_text("${GENERATED_DIR}/LayerBitmapImpl.cpp"
+forbid_text("${GENERATED_DIR}/LayerBitmapImpl.cpp"
     "krkrvita_yuri_profile_bitmap_independ"
-    "bitmap copy-on-write costs are measured on hardware")
+    "bitmap copy-on-write profiling leaked into the release build")
 forbid_text_between("${GENERATED_DIR}/LayerBitmapImpl.cpp"
     "void tTVPNativeBaseBitmap::ApplyFont()"
     "void tTVPNativeBaseBitmap::SetFont("
@@ -534,9 +540,6 @@ require_text("${SOURCE_DIR}/src/platform/vita/yuri_window_layer.cpp"
 forbid_text("${SOURCE_DIR}/src/platform/vita/yuri_window_layer.cpp"
     "texture->AddRef();"
     "the Vita presenter must not make the compositor buffer look shared")
-require_text("${SOURCE_DIR}/src/platform/vita/yuri_main.cpp"
-    "bitmap_independ_copy_bytes_total="
-    "bitmap copy-on-write counters are exported in the hardware snapshot")
 require_text("${GENERATED_DIR}/tjs2/tjsInterCodeExec.cpp"
     "s ? s->GetLength() : 0"
     "empty-string length properties cannot dereference a null string object")
@@ -774,24 +777,15 @@ require_text("${SOURCE_DIR}/src/engine/vita/vitagl_presenter.cpp"
 require_text("${SOURCE_DIR}/src/engine/vita/vitagl_presenter.cpp"
     "vitagl-partial-frame-upload-ready"
     "partial framebuffer upload is observable on hardware")
-require_text("${SOURCE_DIR}/src/platform/vita/yuri_main.cpp"
-    "ux0:data/krkrvita/perf-stats.txt"
-    "on-device profiling separates Yuri execution from VitaGL presentation")
-require_text("${SOURCE_DIR}/src/platform/vita/yuri_main.cpp"
-    "krkrvita_vitagl_uploaded_frames()"
-    "performance telemetry distinguishes real uploads from redraws")
-require_text("${SOURCE_DIR}/src/platform/vita/yuri_main.cpp"
-    "compositor_us_total"
-    "performance telemetry separates layer composition from script execution")
-require_text("${SOURCE_DIR}/src/platform/vita/yuri_main.cpp"
-    "yuri_performance_snapshot_is_safe("
-    "performance telemetry waits for visual quiescence instead of stalling an active frame")
 forbid_text("${SOURCE_DIR}/src/platform/vita/yuri_main.cpp"
-    "if (elapsed >= next_performance_snapshot)"
-    "periodic Vita storage telemetry cannot run synchronously during motion")
-require_text("${GENERATED_DIR}/LayerManager.cpp"
+    "ux0:data/krkrvita/perf-stats.txt"
+    "on-device profiler output is disabled for releases")
+forbid_text("${SOURCE_DIR}/src/platform/vita/yuri_main.cpp"
+    "PerformanceCounters"
+    "event-loop profiling leaked into the release build")
+forbid_text("${GENERATED_DIR}/LayerManager.cpp"
     "krkrvita_yuri_profile_compositor"
-    "every Yuri layer completion reports its dirty-region cost")
+    "compositor profiling leaked into the release build")
 require_text("${GENERATED_DIR}/LayerManager.cpp"
     "void tTVPLayerManager::NotifyUpdateRegionFixed()\n{\n\t// called by primary layer after BeforeCompletion() has finalized damage"
     "Yuri captures presenter damage only at the finalized-region hook")
@@ -815,10 +809,10 @@ forbid_text_between("${GENERATED_DIR}/LayerManager.cpp"
     "void tTVPLayerManager::NotifyUpdateRegionFixed()"
     "krkrvita_yuri_begin_frame_damage"
     "presenter damage cannot be captured before BeforeCompletion finalizes it")
-require_text("${SOURCE_DIR}/vendor/yuri/src/core/visual/LayerIntf.cpp"
+require_text("${YURI_SOURCE_DIR}/src/core/visual/LayerIntf.cpp"
     "void tTJSNI_BaseLayer::CompleteForWindow(tTVPDrawable *drawable)\n{\n\tBeforeCompletion();\n\n\tif(Manager) Manager->NotifyUpdateRegionFixed();"
     "Yuri calls the damage hook only after BeforeCompletion finalizes the region")
-require_text("${SOURCE_DIR}/vendor/yuri/src/core/visual/LayerIntf.cpp"
+require_text("${YURI_SOURCE_DIR}/src/core/visual/LayerIntf.cpp"
     "InternalComplete2(Manager->GetUpdateRegionForCompletion(), drawable);"
     "the finalized region is captured before software completion consumes it")
 require_text("${GENERATED_DIR}/EventIntf.cpp"
@@ -848,9 +842,6 @@ require_text("${SOURCE_DIR}/include/krkrvita/event_arguments.hpp"
 forbid_text("${SOURCE_DIR}/src/platform/vita/yuri_main.cpp"
     "window_update_coalescing"
     "the Vita event loop cannot enable a frame-skipping throttle")
-forbid_text("${SOURCE_DIR}/src/platform/vita/yuri_performance.cpp"
-    "WindowUpdateCoalescer"
-    "compositor telemetry cannot alter Yuri's window-delivery cadence")
 require_text("${SOURCE_DIR}/src/platform/vita/yuri_window_layer.cpp"
     "yuri_needs_full_window_exposure"
     "normal Window.update preserves Yuri's existing dirty regions")
@@ -873,14 +864,13 @@ require_text("${SOURCE_DIR}/src/engine/retail/yuri_sigcheck_module.cpp"
     "deliver_done(owner, handler, verified, error);"
     "sigcheck delivers its result through the event queue")
 # A file with no .sig is unsigned, not corrupt. The reference plug-in passes it;
-# failing it refuses intact retail titles (see allokmama.exe).
+# failing it refuses intact retail titles.
 require_text("${SOURCE_DIR}/src/engine/retail/yuri_sigcheck_module.cpp"
     "if (!TVPIsExistentStorage(signature_path)) {"
     "an absent signature is treated as unsigned rather than as a failure")
 
-# System.exeName must be the game executable, not the project directory:
-# "ダメダメなボクに舞い降りた全肯定ママ女神" exits at script/first.ks unless
-# chopStorageExt(System.exeName) + ".cf" resolves.
+# System.exeName must be the game executable, not the project directory, because
+# scripts may require chopStorageExt(System.exeName) + ".cf" to resolve.
 require_text("${GENERATED_DIR}/Application.cpp"
     "krkrvita_yuri_project_executable_path(TVPNativeProjectDir)"
     "ExePath resolves the staged Windows executable on Vita")
@@ -1270,16 +1260,16 @@ require_text("${GENERATED_DIR}/TimerImpl.cpp"
     "the first KAG timer delivery is observable on hardware")
 require_text_count("${GENERATED_DIR}/KAGParser.cpp"
     "krkrvita::vita_kag_should_emit_log(DebugLevel, tkdlSimple)" 3
-    "Vita preserves every KAG simple scenario-log gate")
+    "Vita routes every KAG simple scenario-log gate through release policy")
 require_text_count("${GENERATED_DIR}/KAGParser.cpp"
     "krkrvita::vita_kag_should_emit_log(DebugLevel, tkdlVerbose)" 4
-    "Vita clamps every KAG verbose per-tag log gate")
+    "Vita disables every KAG verbose per-tag log gate")
 forbid_text("${GENERATED_DIR}/KAGParser.cpp"
     "if(DebugLevel >= tkdlVerbose)"
     "raw KAG verbose gates bypass the Vita log policy")
 require_text("${GENERATED_DIR}/KAGParser.cpp"
-    "krkrvita_boot_trace(\"yuri-kag-verbose-log-clamped\")"
-    "the KAG verbose-log clamp is observable on hardware")
+    "krkrvita_boot_trace(\"yuri-kag-debug-log-disabled\")"
+    "the disabled KAG debug-log policy is observable on hardware")
 require_text("${GENERATED_DIR}/KAGParser.cpp"
     "krkrvita::assemble_kag_inline_script<tjs_char>"
     "KAG inline scripts use bounded pre-sized assembly")
@@ -1298,8 +1288,8 @@ require_text("${GENERATED_DIR}/KAGParser.cpp"
     "yuri-kag-large-inline-execution-complete"
     "large KAG inline execution completion is observable on hardware")
 require_text("${SOURCE_DIR}/include/krkrvita/kag_log_policy.hpp"
-    "return requested > 1 ? 1 : requested;"
-    "the KAG policy retains simple diagnostics while clamping verbose output")
+    "return 0;"
+    "the release KAG policy disables debug diagnostics")
 require_text("${SOURCE_DIR}/src/platform/vita/yuri_pvr.cpp"
     "krkrvita_boot_trace(\"yuri-direct-texture-fallback\")"
     "unsupported direct textures fall back observably to Yuri's bitmap loaders")
@@ -1396,38 +1386,38 @@ require_text("${SOURCE_DIR}/src/engine/retail/yuri_layerexdraw_module.cpp"
 require_text("${COMPILE_COMMANDS}"
     "src/engine/retail/yuri_layerexdraw_module.cpp"
     "the layerExDraw compatibility surface is compiled into the Vita backend")
-# scriptsEx is the vendored upstream implementation, not a script surface.
+# scriptsEx is the fetched upstream implementation, not a script surface.
 # A TJS fallback cannot answer getObjectCount at all, because TJS2 dictionaries
 # expose no "count" member, so require the real ncbind registration.
-require_text("${SOURCE_DIR}/third_party/scriptsEx/scriptsEx.cpp"
+require_text("${KRKR2_SOURCE_DIR}/cpp/plugins/scriptsEx.cpp"
     "NCB_ATTACH_CLASS(ScriptsAdd, Scripts)"
     "scriptsEx attaches to Kirikiri's built-in Scripts class")
-require_text("${SOURCE_DIR}/third_party/scriptsEx/scriptsEx.cpp"
+require_text("${KRKR2_SOURCE_DIR}/cpp/plugins/scriptsEx.cpp"
     "RawCallback(TJS_W(\"getObjectCount\"), &ScriptsAdd::getCount"
     "scriptsEx registers the native startup object-count member")
 require_text("${SOURCE_DIR}/src/engine/retail/yuri_scriptsex_module.cpp"
     "retail-scriptsex-surface-ready"
     "scriptsEx registration is observable on hardware")
 require_text("${COMPILE_COMMANDS}"
-    "third_party/scriptsEx/scriptsEx.cpp"
+    "cpp/plugins/scriptsEx.cpp"
     "the upstream scriptsEx implementation is compiled into the Vita backend")
 require_text("${COMPILE_COMMANDS}"
     "src/engine/retail/yuri_scriptsex_module.cpp"
     "the scriptsEx boot trace is compiled into the Vita backend")
-# layerExBTOA is likewise the vendored upstream implementation. Titles link it
+# layerExBTOA is likewise the fetched upstream implementation. Titles link it
 # without a try/catch, so a link-only stub would clear the boot and then hand
 # back sprites with no transparency -- require the real pixel work.
-require_text("${SOURCE_DIR}/third_party/layerExBTOA/layerExBTOA.cpp"
+require_text("${KRKR2_SOURCE_DIR}/cpp/plugins/layerExBTOA.cpp"
     "NCB_ATTACH_FUNCTION(copyRightBlueToLeftAlpha, Layer, copyRightBlueToLeftAlpha)"
     "layerExBTOA attaches its namesake method to Kirikiri's built-in Layer class")
-require_text("${SOURCE_DIR}/third_party/layerExBTOA/layerExBTOA.cpp"
+require_text("${KRKR2_SOURCE_DIR}/cpp/plugins/layerExBTOA.cpp"
     "NCB_ATTACH_FUNCTION(copyAlphaToProvince, Layer, copyAlphaToProvince)"
     "layerExBTOA registers the province transfers used for hit testing")
 require_text("${SOURCE_DIR}/src/engine/retail/yuri_layerexbtoa_module.cpp"
     "retail-layerexbtoa-surface-ready"
     "layerExBTOA registration is observable on hardware")
 require_text("${COMPILE_COMMANDS}"
-    "third_party/layerExBTOA/layerExBTOA.cpp"
+    "cpp/plugins/layerExBTOA.cpp"
     "the upstream layerExBTOA implementation is compiled into the Vita backend")
 require_text("${COMPILE_COMMANDS}"
     "src/engine/retail/yuri_layerexbtoa_module.cpp"
@@ -1497,10 +1487,10 @@ require_text("${GENERATED_DIR}/squirrel/krkrvita_Main.cpp"
 require_text("${GENERATED_DIR}/squirrel/krkrvita_sqstdio.cpp"
     "TVPCreateIStream(filename"
     "Squirrel file streams use Yuri's UTF-16-aware IStream boundary")
-require_text("${GENERATED_DIR}/squirrel/vm/14_sqstdstring.cpp"
+require_text("${GENERATED_DIR}/squirrel/vm/15_sqstdstring.cpp"
     "krkrvita::squirrel::strtok16"
     "Squirrel string tokenization does not call 32-bit wchar_t wcstok")
-require_text("${GENERATED_DIR}/squirrel/vm/15_sqstdsystem.cpp"
+require_text("${GENERATED_DIR}/squirrel/vm/16_sqstdsystem.cpp"
     "krkrvita::squirrel::getenv16"
     "Squirrel system helpers use the Vita UTF-16 environment bridge")
 require_text("${COMPILE_COMMANDS}"
@@ -1514,9 +1504,9 @@ require_text("${COMPILE_COMMANDS}"
     "the generated Squirrel VM core is compiled into the Vita backend")
 forbid_text("${COMPILE_COMMANDS}"
     "src/plugins/win32/squirrel/Main.cpp"
-    "the vendor Windows Squirrel wrapper must not replace the Vita overlay")
+    "the upstream Windows Squirrel wrapper must not replace the Vita overlay")
 
-# PSD is a shared KAGEX dependency (Torikago and Noble Works both load it
+# PSD is a shared KAGEX dependency (multiple titles load it
 # during startup).  Keep the maintained parser/class boundary generated and
 # ensure the static registration is the published psd.dll module, not the
 # similarly named psbfile.dll compatibility module.
@@ -1540,7 +1530,7 @@ require_text("${COMPILE_COMMANDS}"
     "the maintained PSD parser is compiled into the Vita backend")
 forbid_text("${COMPILE_COMMANDS}"
     "/cpp/plugins/psdfile/main.cpp"
-    "the fetched vendor PSD main must not replace the generated overlay")
+    "the fetched PSD main must not replace the generated overlay")
 
 require_text("${SOURCE_DIR}/src/engine/retail/yuri_shrink_copy.cpp"
     "NCB_MODULE_NAME TJS_W(\"shrinkCopy.dll\")"
@@ -1654,26 +1644,26 @@ math(EXPR compile_command_last "${compile_command_count} - 1")
 foreach(compile_command_index RANGE 0 ${compile_command_last})
     string(JSON compile_source GET "${compile_commands}"
         ${compile_command_index} file)
-    string(FIND "${compile_source}" "/vendor/yuri/" vendor_yuri_offset)
+    string(FIND "${compile_source}" "${YURI_SOURCE_DIR}/" yuri_source_offset)
     string(FIND "${compile_source}" "/generated/yuri/" generated_yuri_offset)
-    if(NOT vendor_yuri_offset LESS 0 OR NOT generated_yuri_offset LESS 0)
+    if(NOT yuri_source_offset LESS 0 OR NOT generated_yuri_offset LESS 0)
         string(JSON compile_command GET "${compile_commands}"
             ${compile_command_index} command)
         string(FIND "${compile_command}" "-I${GENERATED_DIR}"
             generated_include_offset)
         string(FIND "${compile_command}"
-            "-I${SOURCE_DIR}/vendor/yuri/src/core"
-            vendor_include_offset)
-        if(generated_include_offset LESS 0 OR vendor_include_offset LESS 0 OR
-           NOT generated_include_offset LESS vendor_include_offset)
+            "-I${YURI_SOURCE_DIR}/src/core"
+            yuri_include_offset)
+        if(generated_include_offset LESS 0 OR yuri_include_offset LESS 0 OR
+           NOT generated_include_offset LESS yuri_include_offset)
             message(FATAL_ERROR
-                "Generated Yuri ABI overlays do not precede vendor headers: ${compile_source}")
+                "Generated Yuri ABI overlays do not precede fetched headers: ${compile_source}")
         endif()
     endif()
 endforeach()
 foreach(required_source
     "generated/yuri/EventIntf.cpp"
-    "vendor/yuri/src/plugins/addFont.cpp"
+    "krkrvita_yuri-src/src/plugins/addFont.cpp"
     "generated/yuri/GraphicsLoaderIntf.cpp"
     "generated/yuri/LayerBitmapIntf.cpp"
     "generated/yuri/LayerBitmapImpl.cpp"
@@ -1701,10 +1691,9 @@ foreach(required_source
     "src/engine/retail/yuri_shrink_copy.cpp"
     "src/engine/retail/yuri_motionplayer_module.cpp"
     "src/engine/retail/yuri_layerexdraw_module.cpp"
-    "third_party/scriptsEx/scriptsEx.cpp"
+    "krkrvita_krkr2_next-src/cpp/plugins/scriptsEx.cpp"
     "src/engine/retail/yuri_scriptsex_module.cpp"
     "src/platform/vita/yuri_threading_self_test.cpp"
-    "src/platform/vita/yuri_performance.cpp"
     "src/platform/vita/yuri_storage_preflight.cpp"
     "src/platform/vita/yuri_openal_mixer.cpp"
     "src/platform/vita/yuri_video_overlay.cpp"
@@ -1719,19 +1708,18 @@ foreach(required_source
 endforeach()
 
 foreach(forbidden_source
-    "vendor/yuri/src/core/base/EventIntf.cpp"
-    "vendor/krkrsdl2"
+    "krkrvita_yuri-src/src/core/base/EventIntf.cpp"
     "/environ/android/"
     "/environ/ui/"
     "src/platform/vita/yuri_pvf_font_rasterizer.cpp"
     "generated/yuri/RenderManager_ogl.cpp"
-    "vendor/yuri/src/core/visual/GraphicsLoaderIntf.cpp"
-    "vendor/yuri/src/core/visual/LayerBitmapIntf.cpp"
-    "vendor/yuri/src/core/visual/win32/LayerBitmapImpl.cpp"
-    "vendor/yuri/src/core/visual/LayerIntf.cpp"
-    "vendor/yuri/src/core/visual/RenderManager.cpp"
-    "vendor/yuri/src/core/visual/TransIntf.cpp"
-    "vendor/yuri/src/core/visual/LoadPVRv3.cpp"
+    "krkrvita_yuri-src/src/core/visual/GraphicsLoaderIntf.cpp"
+    "krkrvita_yuri-src/src/core/visual/LayerBitmapIntf.cpp"
+    "krkrvita_yuri-src/src/core/visual/win32/LayerBitmapImpl.cpp"
+    "krkrvita_yuri-src/src/core/visual/LayerIntf.cpp"
+    "krkrvita_yuri-src/src/core/visual/RenderManager.cpp"
+    "krkrvita_yuri-src/src/core/visual/TransIntf.cpp"
+    "krkrvita_yuri-src/src/core/visual/LoadPVRv3.cpp"
     "layerExMovie.cpp"
     "PIB")
     string(FIND "${compile_commands}" "${forbidden_source}" offset)

@@ -4,6 +4,22 @@ endif()
 if(NOT DEFINED NM OR NOT EXISTS "${NM}")
     message(FATAL_ERROR "Vita ELF contract check has no nm tool")
 endif()
+if(NOT DEFINED READELF OR NOT EXISTS "${READELF}")
+    message(FATAL_ERROR "Vita ELF contract check has no readelf tool")
+endif()
+
+execute_process(
+    COMMAND "${READELF}" -SW "${ELF}"
+    RESULT_VARIABLE readelf_result
+    OUTPUT_VARIABLE sections
+    ERROR_VARIABLE readelf_error)
+if(NOT readelf_result EQUAL 0)
+    message(FATAL_ERROR "Cannot inspect Vita ELF sections: ${readelf_error}")
+endif()
+if(sections MATCHES "\\.debug_[A-Za-z0-9_]+")
+    message(FATAL_ERROR
+        "Vita release ELF contains debug information; rebuild all static dependencies without debug flags")
+endif()
 
 execute_process(
     COMMAND "${NM}" -C "${ELF}"

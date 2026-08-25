@@ -1,4 +1,9 @@
 /build*/
+/agent/
+/_deps/
+/vendor/
+/third_party/
+/node_modules/
 /.cache/
 /.idea/
 /.vscode/
@@ -7,7 +12,8 @@ compile_commands.json
 *.velf
 *.self
 *.sfo
+*.o
+*.ttc
 
-# User-supplied proprietary runtime dependency. It must remain external at
-# ux0:data/krkrvita/msgothic.ttc and must never enter source control or a VPK.
-/vendor/msgothic.ttc
+# User-supplied proprietary fonts must remain external and must never enter
+# source control or a VPK.

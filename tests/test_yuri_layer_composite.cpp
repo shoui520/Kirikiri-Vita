@@ -1,7 +1,7 @@
-// Host reproduction of the Sharin no Kuni black-layer defect, at layer level.
+// Host reproduction of a retail black-layer defect, at layer level.
 //
-// Nine device runs narrowed this to one unexplained pair of observations
-// (AGENT-HANDOFF.md §37.4). Both probes report the same iTVPBaseBitmap*:
+// Device traces narrowed this to one unexplained pair of observations. Both
+// probes report the same iTVPBaseBitmap*:
 //
 //   probe-fill       #9 color=00000000 800x600 back=00000000 surf=835ec410
 //   probe-draw-entry #1 type=12 centre=ff000000 800x600 surf=835ec410
@@ -14,7 +14,7 @@
 //   (a) the layer's pixels were overwritten in place, or
 //   (b) the layer's bitmap was repointed at a different, opaque texture.
 //
-// This test models Sharin's actual tree -- an ltOpaque primary with a
+// This test models the affected title's tree -- an ltOpaque primary with a
 // full-screen ltAddAlpha child, which is what `@position left=0 top=0
 // width=800 height=600 frame="" opacity=0` builds -- runs the real compositor,
 // and records the pixel *and* the texture pointer on both sides. That
@@ -105,7 +105,7 @@ public:
 
 // tTJSNI_BaseLayer is concrete and its constructor only zeroes members, so a
 // layer can be built without a TJS engine, window object or class
-// registration. See AGENT-HANDOFF.md §38.1.
+// registration.
 class HarnessLayer : public tTJSNI_BaseLayer {
 public:
     iTVPBaseBitmap* image() { return MainImage; }
@@ -196,7 +196,7 @@ int main() {
     const Sample after_draw = sample(message);
     report("after draw cycle", after_draw);
 
-    // The question from AGENT-HANDOFF.md §37.4, answered.
+    // Determine whether the texture changed or its pixels were overwritten.
     if (after_draw.pixel == kOpaqueBlack) {
         if (after_draw.texture != after_fill.texture) {
             std::puts("REPRODUCED: bitmap was repointed at a different texture");

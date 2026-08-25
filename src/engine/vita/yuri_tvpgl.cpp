@@ -3,4 +3,4 @@
 // Keep Yuri's generated scalar core and its ARM backend from the same source
 // generation.  The NEON routines use these functions for short and unaligned
 // fragments.
-#include "../../../vendor/yuri/src/core/visual/tvpgl.cpp"
+#include "tvpgl.cpp"

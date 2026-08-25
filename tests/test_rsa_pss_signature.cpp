@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -107,10 +108,13 @@ int main() {
                     malformed.data(), malformed.size(), rejected, &error),
                 "malformed signature envelope was accepted");
 
-        const std::filesystem::path retail =
-            "/mnt/j/アパタイト/ダメダメなボクに舞い降りた全肯定ママ女神！～すごいね、いっぱい頑張ったんだね♪♪～";
-        if (std::filesystem::exists(retail / "data.xp3") &&
-            std::filesystem::exists(retail / "data.xp3.sig")) {
+        const char* corpus =
+            std::getenv("KRKRVITA_TEST_SIGNED_ARCHIVE_DIR");
+        if (corpus && *corpus) {
+            const std::filesystem::path retail = corpus;
+            require(std::filesystem::exists(retail / "data.xp3") &&
+                        std::filesystem::exists(retail / "data.xp3.sig"),
+                    "signed archive corpus is incomplete");
             constexpr std::string_view retail_key =
                 "-----BEGIN PUBLIC KEY-----\n"
                 "MIGJAoGBAM9SZJzFoJNvGMjW7Ag2fHpHHZnZwmoc0LIzl5sCenvp+sShikO22lQs\n"

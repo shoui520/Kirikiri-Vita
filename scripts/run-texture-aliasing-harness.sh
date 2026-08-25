@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build and run the host texture/compositing harness.
 #
-# Why this exists: the Sharin no Kuni black-layer defect consumed eight
+# Why this exists: a retail black-layer defect consumed several
 # flash-install-run-collect cycles on the user's physical Vita, and each cycle
 # could only eliminate one hypothesis. Yuri's bitmap, texture and render-method
 # code compiles and runs natively, so those hypotheses can be tested in seconds
@@ -14,10 +14,10 @@
 # drawn and inspected here.
 #
 # This links the **generated** RenderManager.cpp, LayerBitmapIntf.cpp,
-# LayerIntf.cpp and LayerManager.cpp from the Vita build tree, not the vendor
+# LayerIntf.cpp and LayerManager.cpp from the Vita build tree, not the upstream
 # originals, so the code under test is the product's own -- including the patched iTVPTexture2D::IsIndependent() that
 # trades copy-on-write safety for a skipped copy when the presenter holds a
-# reference. Testing the vendor sources instead would silently exercise stock
+# reference. Testing the upstream sources instead would silently exercise stock
 # semantics and pass regardless.
 #
 # Requirements:
@@ -51,7 +51,7 @@ for required in \
     "$vita_generated/LayerBitmapIntf.cpp" \
     "$vita_generated/LayerIntf.cpp" \
     "$host_build/libkrkrvita-yuri-tjs.a" \
-    "$host_build/vendor/oniguruma/libonig.a" \
+    "$host_build/_deps/krkrvita_oniguruma-build/libonig.a" \
     "$ffmpeg_include/libswscale/swscale.h"
 do
     if [ ! -e "$required" ]; then
@@ -61,7 +61,7 @@ do
     fi
 done
 
-core=vendor/yuri/src/core
+core=$host_build/_deps/krkrvita_yuri-src/src/core
 includes=(
     -I"$vita_generated"
     -Iinclude
@@ -78,7 +78,7 @@ includes=(
     -Isrc/platform/vita
 )
 
-g++ -std=gnu++17 -g -O1 -include src/yuri/tjs_compat.hpp "${includes[@]}" \
+g++ -std=gnu++17 -O2 -DNDEBUG -include src/yuri/tjs_compat.hpp "${includes[@]}" \
     "$harness_test" \
     tests/yuri_texture_harness_stubs.cpp \
     tests/yuri_layer_harness_stubs.cpp \
@@ -86,7 +86,6 @@ g++ -std=gnu++17 -g -O1 -include src/yuri/tjs_compat.hpp "${includes[@]}" \
     "$vita_generated/LayerBitmapIntf.cpp" \
     "$vita_generated/LayerIntf.cpp" \
     "$vita_generated/LayerManager.cpp" \
-    src/platform/vita/yuri_composite_probe.cpp \
     "$core/msg/MsgIntf.cpp" \
     "$core/visual/TransIntf.cpp" \
     "$core/visual/tvpgl.cpp" \
@@ -102,7 +101,7 @@ g++ -std=gnu++17 -g -O1 -include src/yuri/tjs_compat.hpp "${includes[@]}" \
     "$core/visual/win32/BitmapInfomation.cpp" \
     "$core/visual/win32/LayerBitmapImpl.cpp" \
     "$host_build/libkrkrvita-yuri-tjs.a" \
-    "$host_build/vendor/oniguruma/libonig.a" \
+    "$host_build/_deps/krkrvita_oniguruma-build/libonig.a" \
     -lfreetype -lpthread \
     -o "$out"
 

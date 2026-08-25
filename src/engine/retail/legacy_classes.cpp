@@ -3,7 +3,7 @@
 #include "MsgIntf.h"
 #define tTJSSpinLock tTJSCriticalSection
 #define tTJSSpinLockHolder tTJSCriticalSectionHolder
-#include "../../../vendor/krkrsdl2/external/krkrz/visual/WindowIntf.h"
+#include "WindowIntf.h"
 #include "MenuItemIntf.h"
 
 namespace {

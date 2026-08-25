@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -109,9 +110,10 @@ std::vector<std::uint8_t> read_entry(const std::filesystem::path& archive_path,
     return std::move(*bytes);
 }
 
-void test_noble_works() {
-    const std::filesystem::path game =
-        "/mnt/j/YuzuSoft/のーぶる☆わーくす";
+void test_external_psb_corpus() {
+    const char* corpus = std::getenv("KRKRVITA_TEST_PSB_GAME_DIR");
+    if (!corpus || !*corpus) return;
+    const std::filesystem::path game = corpus;
     if (!std::filesystem::is_directory(game)) return;
 
     std::string error;
@@ -261,7 +263,7 @@ int main() {
         }
 
         // Payload bases are different: an empty region legitimately begins one
-        // past the last byte. Rejecting that broke every Noble Works scene
+        // past the last byte. Rejecting that broke every external scene
         // state, so pin both the accepted and the rejected side.
         for (const auto data_field : {20u, 32u}) {
             auto at_end = bytes;
@@ -281,7 +283,7 @@ int main() {
         }
 
         test_short_read_join();
-        test_noble_works();
+        test_external_psb_corpus();
         std::cout << "PSB parser contracts passed\n";
         return 0;
     } catch (const std::exception& exception) {

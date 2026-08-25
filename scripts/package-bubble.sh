@@ -10,7 +10,7 @@ if [[ $# -lt 2 || $# -gt 3 ]]; then
   exit 2
 fi
 
-: "${VITASDK:=/home/shoui/vitasdk}"
+: "${VITASDK:?Set VITASDK to the VitaSDK installation directory}"
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 game_dir="$1"
 output_vpk="$2"

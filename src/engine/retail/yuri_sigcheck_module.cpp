@@ -71,10 +71,10 @@ bool verify_storage(const ttstr& target, const std::string& public_key,
                     std::string& error) {
     // An absent .sig means "this file is not signed", not "this file failed".
     //
-    // Aoi Tori's release.ks checks Storages.chopStorageExt(System.exeName) plus
-    // every archive, and exits on result < 1. The shipped game has a .sig for
-    // each .xp3 but none for allokmama.exe, and it runs on Windows through that
-    // same executable -- so the original sigcheck.dll cannot be reporting a
+    // Some release scripts check Storages.chopStorageExt(System.exeName) plus
+    // every archive, and exit on result < 1. A valid layout may have a .sig for
+    // each .xp3 but none for the executable, so the original sigcheck.dll cannot
+    // be reporting a
     // missing signature as a failure. Treating it as one is stricter than the
     // plug-in we are standing in for, and refuses titles that are intact.
     //

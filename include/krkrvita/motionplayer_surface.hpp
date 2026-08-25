@@ -4,7 +4,7 @@
 
 namespace krkrvita {
 
-// Noble Works and a few KAGEX titles catch motionplayer.dll load failures but
+// Some KAGEX titles catch motionplayer.dll load failures but
 // still instantiate the Motion namespace from the same script unit.  Keep the
 // fallback in one literal so the Vita registration and the host compatibility
 // test execute exactly the same TJS source.  This is the script/API surface;

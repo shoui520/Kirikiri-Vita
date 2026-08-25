@@ -23,7 +23,14 @@ fi
 # Link the VitaSDK's own zlib rather than an armhf distribution build, so the
 # inflate being measured is the one the Vita backend actually calls. The probe
 # declares zlib's entry points itself, so no VitaSDK headers are involved.
-zlib=${KRKRVITA_ARM_ZLIB:-${VITASDK:-/home/shoui/vitasdk}/arm-vita-eabi/lib/libz.a}
+if [[ -n ${KRKRVITA_ARM_ZLIB:-} ]]; then
+    zlib=$KRKRVITA_ARM_ZLIB
+elif [[ -n ${VITASDK:-} ]]; then
+    zlib=$VITASDK/arm-vita-eabi/lib/libz.a
+else
+    echo "set KRKRVITA_ARM_ZLIB or VITASDK to locate the ARM zlib archive" >&2
+    exit 2
+fi
 if [[ ! -f $zlib ]]; then
     echo "zlib archive to measure not found: $zlib" >&2
     exit 2
