@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(krkrvita VERSION 0.1.1 LANGUAGES C CXX)
+project(krkrvita VERSION 0.1.2 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -1030,6 +1030,7 @@ else()
         # real registry and the real TJS VM instead.
         add_executable(krkrvita-yuri-plugin-registry-test
             tests/test_yuri_plugin_registry.cpp
+            src/engine/retail/yuri_fbfsteam_module.cpp
             src/engine/retail/yuri_motionplayer_module.cpp
             src/engine/retail/yuri_layerexdraw_module.cpp
             "${KRKRVITA_KRKR2_NEXT_SOURCE_DIR}/cpp/plugins/scriptsEx.cpp"
@@ -1054,9 +1055,18 @@ else()
             $<$<COMPILE_LANGUAGE:CXX>:-include${CMAKE_CURRENT_SOURCE_DIR}/src/yuri/tjs_compat.hpp>
             -Wno-deprecated-declarations)
         target_link_libraries(krkrvita-yuri-plugin-registry-test PRIVATE
-            krkrvita-yuri-tjs)
+            krkrvita-yuri-tjs krkrvita-common)
         add_test(NAME krkrvita-yuri-plugin-registry
             COMMAND krkrvita-yuri-plugin-registry-test)
+        set(KRKRVITA_SEABED_TEST_GAME "" CACHE PATH
+            "Optional unpatched SeaBed directory for the host plugin execution test")
+        if(KRKRVITA_SEABED_TEST_GAME)
+            add_test(NAME krkrvita-seabed-plugin-execution
+                COMMAND krkrvita-yuri-plugin-registry-test
+                    --seabed "${KRKRVITA_SEABED_TEST_GAME}")
+            set_tests_properties(krkrvita-seabed-plugin-execution
+                PROPERTIES LABELS "retail;execution")
+        endif()
 
         # saveStruct emits quoted dictionary strings one code unit at a time.
         # The Vita plugin aggregates those writes into a fixed buffer; pin the

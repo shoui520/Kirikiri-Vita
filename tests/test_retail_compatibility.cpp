@@ -1285,6 +1285,7 @@ void run_internal_contract_tests() {
             !yuri_plugin_is_link_only("krmovie.dll"),
             "partial plugin capability status is inconsistent");
     require(yuri_plugin_has_script_surface("motionplayer.dll") &&
+            yuri_plugin_has_script_surface("fbfsteamplugin.dll") &&
             yuri_plugin_has_script_surface("gfxeffect.dll") &&
             yuri_plugin_has_script_surface("layerexdraw.dll") &&
             yuri_plugin_has_script_surface("scriptsex.dll") &&
@@ -1305,6 +1306,8 @@ void run_internal_contract_tests() {
             yuri_plugin_fidelity("gfxeffect.dll") ==
                 YuriPluginFidelity::control_flow_fallback &&
             yuri_plugin_fidelity("extnagano.dll") ==
+                YuriPluginFidelity::behavioral_subset &&
+            yuri_plugin_fidelity("fbfsteamplugin.dll") ==
                 YuriPluginFidelity::behavioral_subset &&
             yuri_plugin_fidelity("scriptsex.dll") ==
                 YuriPluginFidelity::portable_equivalent &&

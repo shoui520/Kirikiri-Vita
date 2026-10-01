@@ -842,11 +842,50 @@ public:
     if(yuri_script_manager_patched STREQUAL yuri_script_manager_text)
         message(FATAL_ERROR "Yuri external retail patch path patch no longer applies")
     endif()
+    set(yuri_startup_execution_old [=[
+            try {
+                iTJSTextReadStream * stream = TVPCreateTextStreamForRead(place, "");
+                stream->Destruct();
+                TVPExecuteStorage(TVPStartupScriptName);
+				TVPStartupSuccess = true;
+            }
+            catch (...)
+            {
+				if (!TVPIsExistentStorage(TJS_W("System/Initialize.tjs"))) {
+					throw;
+				}
+            }
+			if (TVPStartupSuccess) {
+            } else {
+                // try direct execute initialize.tjs to compatible for some patch
+                TVPExecuteStorage(TJS_W("System/Initialize.tjs"));
+				TVPStartupSuccess = true;
+            }
+]=])
+    set(yuri_startup_execution_new [=[
+            krkrvita::execute_yuri_startup([&] {
+                iTJSTextReadStream * stream = TVPCreateTextStreamForRead(place, "");
+                stream->Destruct();
+                TVPExecuteStorage(TVPStartupScriptName);
+            }, [] {
+                return TVPIsExistentStorage(TJS_W("System/Initialize.tjs"));
+            }, [] {
+                TVPExecuteStorage(TJS_W("System/Initialize.tjs"));
+            });
+            TVPStartupSuccess = true;
+]=])
+    string(FIND "${yuri_script_manager_patched}"
+        "${yuri_startup_execution_old}" yuri_startup_execution_offset)
+    if(yuri_startup_execution_offset LESS 0)
+        message(FATAL_ERROR "Yuri shared startup execution patch no longer applies")
+    endif()
+    string(REPLACE "${yuri_startup_execution_old}" "${yuri_startup_execution_new}"
+        yuri_script_manager_patched "${yuri_script_manager_patched}")
     set(yuri_script_manager_before_vita_hook
         "${yuri_script_manager_patched}")
     string(REPLACE
         "#include \"Application.h\""
-        "#include \"Application.h\"\n#include \"krkrvita/kag_system_variables.hpp\"\n#include \"krkrvita/retail_bootstrap.hpp\""
+        "#include \"Application.h\"\n#include \"krkrvita/kag_system_variables.hpp\"\n#include \"krkrvita/retail_bootstrap.hpp\"\n#include \"krkrvita/yuri_startup_execution.hpp\""
         yuri_script_manager_patched
         "${yuri_script_manager_patched}")
     if(yuri_script_manager_patched STREQUAL
@@ -1349,38 +1388,16 @@ void TVPLoadPlugin(const ttstr & name)
     return; // seal all plugins
 ]=])
     set(yuri_checked_plugin_loader [=[
-static bool TVPIsIntegratedPlugin(const ttstr &name)
-{
-	const ttstr module = TVPExtractStorageName(name).AsLowerCase();
-	static const tjs_char *const integrated[] = {
-#define KRKRVITA_YURI_TJS_PLUGIN(name) TJS_W(name),
-		KRKRVITA_YURI_INTEGRATED_PLUGIN_MODULES(KRKRVITA_YURI_TJS_PLUGIN)
-#undef KRKRVITA_YURI_TJS_PLUGIN
-	};
-	for(const auto *candidate : integrated)
-		if(module == candidate) return true;
-	return false;
-}
+#include "krkrvita/yuri_checked_plugin_loader.hpp"
 
 static bool TVPTryLoadPlugin(const ttstr &name)
 {
-	const ttstr module = TVPExtractStorageName(name).AsLowerCase();
-	if(TVPRegisteredPlugins.find(module) != TVPRegisteredPlugins.end()) return true;
-	if(TVPLoadInternalPlugin(module)) return true;
-	if(TVPIsIntegratedPlugin(module))
-	{
-		TVPRegisteredPlugins.insert(module);
-		if(module == TJS_W("krmovie.dll"))
-			krkrvita_boot_trace("retail-krmovie-core-alias-ready");
-		return true;
-	}
-	return false;
+    return krkrvita::try_load_yuri_plugin(name);
 }
 
 void TVPLoadPlugin(const ttstr & name)
 {
-	if(TVPTryLoadPlugin(name)) return;
-	TVPThrowExceptionMessage(TVPCannotLoadPlugin, name);
+    krkrvita::load_yuri_plugin(name);
 ]=])
     string(REPLACE "${yuri_sealed_plugin_loader}"
         "${yuri_checked_plugin_loader}"
@@ -4843,6 +4860,10 @@ static void TVPInitRippleTransformFuncs()
     list(APPEND yuri_plugin_sources
         "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/retail/yuri_motionplayer_module.cpp")
 
+    # Offline Steam API used by Fruitbat Factory titles, including SeaBed.
+    list(APPEND yuri_plugin_sources
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/retail/yuri_fbfsteam_module.cpp")
+
     # layerExDraw is a Windows/GDI+ plug-in whose KAGEX script surface is used
     # after a caught load failure.  Register a conservative Vita fallback so
     # those globals remain callable during startup; its image operations are
@@ -5616,7 +5637,7 @@ static void TVPInitRippleTransformFuncs()
     # all set this exact field explicitly.
     set(VITA_MKSFOEX_FLAGS "-d ATTRIBUTE2=12")
     vita_create_vpk(krkrvita-yuri.vpk KRVITA001 krkrvita-yuri.self
-        VERSION 00.02
+        VERSION 00.03
         NAME "Kirikiri Vita"
         FILE "${CMAKE_CURRENT_SOURCE_DIR}/resources/vita/sce_sys/icon0.png"
              sce_sys/icon0.png

@@ -17,17 +17,27 @@
 
 #include "PluginImpl.h"
 #include "TextStream.h"
+#include "krkrvita/yuri_checked_plugin_loader.hpp"
+#include "krkrvita/yuri_startup_execution.hpp"
+#include "krkrvita/kag_inline_script.hpp"
+#include "krkrvita/xp3_archive.hpp"
+#include "krkrvita/text_codec.hpp"
 
 extern "C" {
 #include "md5.h"
 }
 
 #include <codecvt>
+#include <algorithm>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <locale>
 #include <memory>
 #include <set>
+#include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -40,6 +50,7 @@ namespace {
 TJS::tTJS* script_engine = nullptr;
 std::vector<std::string> executed_scripts;
 std::vector<std::string> boot_traces;
+std::string platform_language = "ja_jp";
 
 [[noreturn]] void fail(const char* message) {
     std::cerr << "FAIL: " << message << '\n';
@@ -62,14 +73,9 @@ std::string to_utf8(const ttstr& value) {
     return utf8_converter().to_bytes(begin, begin + value.GetLen());
 }
 
-// Mirrors the generated Vita PluginImpl.cpp: registry hit, then internal
-// module load.  The integrated-alias arm is deliberately excluded so this
-// test cannot be satisfied by name aliasing alone.
+// Execute the same checked loader included by Vita's generated PluginImpl.
 bool try_load_plugin(const ttstr& name) {
-    const ttstr module = name.AsLowerCase();
-    if (TVPRegisteredPlugins.find(module) != TVPRegisteredPlugins.end())
-        return true;
-    return ncbAutoRegister::LoadModule(module);
+    return krkrvita::try_load_yuri_plugin(name);
 }
 
 void link_plugin(const char16_t* name, const char* label) {
@@ -172,7 +178,17 @@ void TVPThrowExceptionMessage(const tjs_char* message, const ttstr& detail) {
 }
 
 ttstr TVPNormalizeStorageName(const ttstr& name) { return name; }
-ttstr TVPExtractStorageName(const ttstr& name) { return name; }
+ttstr TVPExtractStorageName(const ttstr& name) {
+    const auto text = to_utf8(name);
+    const auto slash = text.find_last_of("/\\:>");
+    return ttstr(slash == std::string::npos ? text : text.substr(slash + 1));
+}
+bool TVPLoadInternalPlugin(const ttstr& name) {
+    return ncbAutoRegister::LoadModule(name);
+}
+tTJSMessageHolder TVPCannotLoadPlugin(
+    TJS_W("CannotLoadPlugin"), TJS_W("Cannot load plugin: %1"));
+std::string TVPGetCurrentLanguage() { return platform_language; }
 void TVPGetLocalName(ttstr&) {}
 bool TVPIsExistentStorage(const ttstr&) { return false; }
 tTJSBinaryStream* TVPCreateStream(const ttstr&, tjs_uint32) { return nullptr; }
@@ -180,6 +196,7 @@ void TVPAddLog(const ttstr&) {}
 
 iTJSTextReadStream* TVPCreateTextStreamForRead(const ttstr&, const ttstr&) {
     TVPThrowExceptionMessage(TJS_W("no storage in the registry host test"));
+    return nullptr;
 }
 
 void TVPExecuteExpression(const ttstr& content, tTJSVariant* result) {
@@ -244,7 +261,245 @@ extern "C" void krkrvita_boot_trace(const char* stage) {
 
 extern "C" void krkrvita_write_error(const char*) {}
 
-int main() {
+namespace {
+
+// The native Plugins.link boundary uses the exact checked loader compiled
+// into Vita, including name normalization, registration and unknown-DLL errors.
+tjs_error TJS_INTF_METHOD probe_link(tTJSVariant*, tjs_int count,
+                                     tTJSVariant** parameters, iTJSDispatch2*) {
+    if (count < 1) return TJS_E_BADPARAMCOUNT;
+    krkrvita::load_yuri_plugin(ttstr(*parameters[0]));
+    return TJS_S_OK;
+}
+
+void install_probe_link() {
+    exec("class Plugins {}");
+    auto plugins = eval("Plugins");
+    auto* object = plugins.AsObjectNoAddRef();
+    auto* method = TJSCreateNativeClassMethod(probe_link);
+    tTJSVariant value(method);
+    method->Release();
+    check(TJS_SUCCEEDED(object->PropSet(TJS_MEMBERENSURE, TJS_W("link"),
+                                       nullptr, &value, object)),
+          "cannot install native Plugins.link");
+}
+
+void execute_named(const std::string& text, const char* name) {
+    const auto wide = utf8_converter().from_bytes(text);
+    const auto wide_name = utf8_converter().from_bytes(name);
+    const ttstr block(reinterpret_cast<const tjs_char*>(wide_name.c_str()));
+    script_engine->ExecScript(
+        ttstr(reinterpret_cast<const tjs_char*>(wide.c_str())),
+        nullptr, nullptr, &block);
+}
+
+std::string archive_text(const krkrvita::Xp3Archive& archive,
+                         const char* name) {
+    const auto* entry = archive.find(name);
+    check(entry != nullptr, "required SeaBed script is missing");
+    std::string error, text;
+    const auto bytes = archive.read(*entry, 4 * 1024 * 1024, nullptr, &error);
+    check(bytes.has_value(), "cannot read SeaBed script");
+    check(krkrvita::decode_kirikiri_text(*bytes, text, &error),
+          "cannot decode SeaBed script");
+    return text;
+}
+
+std::string first_inline_script(const std::string& scenario) {
+    std::istringstream input(scenario);
+    std::vector<std::string> lines;
+    std::string line;
+    bool inside = false;
+    while (std::getline(input, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line == "[iscript]") { inside = true; continue; }
+        if (inside && line == "[endscript]") {
+            return krkrvita::assemble_kag_inline_script<char>(0, lines.size(),
+                [&](std::size_t index) { return lines[index].c_str(); });
+        }
+        if (inside) lines.push_back(line);
+    }
+    fail("SeaBed first.ks has no complete iscript block");
+}
+
+// Extract these complete methods unchanged from the local game, including
+// their real sflags/menu/history side effects. No proprietary fixture is
+// embedded in the repository. The three methods have tab-indented closing
+// braces at class-member level in both supported SeaBed script revisions.
+std::string game_method(const std::string& source, const char* name) {
+    const auto begin = source.find(std::string("\tfunction ") + name + "(");
+    check(begin != std::string::npos, "SeaBed method is missing");
+    auto end = source.find("\n\t}\r", begin);
+    if (end == std::string::npos) end = source.find("\n\t}\n", begin);
+    check(end != std::string::npos, "SeaBed method is unterminated");
+    return source.substr(begin, end + 3 - begin);
+}
+
+void test_fbfsteam(const std::filesystem::path& game) {
+    install_probe_link();
+    std::string startup = R"TJS(
+global.FBFSteam = null;
+Plugins.link('FBFSteamPlugin.dll');
+global.FBFSteam = new CFBFSteam();
+FBFSteam.InitSteamAPI();
+function FBFCallback() { FBFSteam.RunCallBacks(); kag.update(); }
+System.addContinuousHandler(FBFCallback);
+Scripts.execStorage('system/Initialize.tjs');
+)TJS";
+    std::string first = R"TJS(
+if (sf.textfade === void) {
+    if (FBFSteam != void) {
+        var language = FBFSteam.GetUserLanguage();
+        if (language == 1) kag.onJapaneseLanguageMenuClick();
+        else kag.onEnglishLanguageMenuClick();
+    }
+    sf.textfade = 1;
+}
+)TJS";
+    std::string methods = R"TJS(
+function onJapaneseLanguageMenuClick() { sflags.fbflang=1; }
+function onEnglishLanguageMenuClick() { sflags.fbflang=0; }
+function onConductorScript(text, name, line) { Scripts.exec(text, name, line); }
+)TJS";
+    if (!game.empty()) {
+        check(!std::filesystem::exists(game / "patch.xp3"),
+              "this probe requires the unpatched SeaBed archive layout");
+        std::string error;
+        const auto archive = krkrvita::Xp3Archive::open(game / "data.xp3", &error);
+        check(archive.has_value(), "cannot open SeaBed data.xp3");
+        startup = archive_text(*archive, "startup.tjs");
+        first = first_inline_script(archive_text(*archive, "scenario/first.ks"));
+        const auto window = archive_text(*archive, "system/MainWindow.tjs");
+        methods = game_method(window, "onJapaneseLanguageMenuClick") + "\n" +
+                  game_method(window, "onEnglishLanguageMenuClick") + "\n" +
+                  game_method(window, "onConductorScript");
+        std::cout << "Loaded actual SeaBed startup, first.ks and language/"
+                     "script-dispatch methods from data.xp3\n";
+    }
+    exec(R"TJS(
+var initializedStorages=[], registeredHandlers=[];
+class System {
+    function addContinuousHandler(handler) { registeredHandlers.add(handler); }
+}
+Scripts.execStorage=function(path) { initializedStorages.add(path); };
+var f=%[], sf=%[];
+)TJS");
+    // Graphics/window services stop at instrumented host boundaries. The
+    // game methods, TJS VM, native plugin and loader execute for real.
+    exec((R"TJS(
+class ProbeKAG {
+    var sflags=sf, updateCount=0, menuUpdates=0;
+    var historyLayer=%['onLanguageChange'=>function() {}];
+    function update() { ++updateCount; }
+    function FBFSetWindowMenuTexts() { ++menuUpdates; }
+)TJS" + methods + "\n}\nvar kag=new ProbeKAG();").c_str());
+
+    // Scripts.exec dispatches exactly like KAG's native script callback.
+    auto scripts = eval("Scripts");
+    auto* script_class = scripts.AsObjectNoAddRef();
+    auto* method = TJSCreateNativeClassMethod(
+        [](tTJSVariant* result, tjs_int count, tTJSVariant** parameters,
+           iTJSDispatch2*) -> tjs_error {
+            if (count < 1) return TJS_E_BADPARAMCOUNT;
+            const ttstr name = count > 1 ? ttstr(*parameters[1]) : ttstr();
+            script_engine->ExecScript(ttstr(*parameters[0]), result,
+                                      nullptr, &name,
+                                      count > 2 ? parameters[2]->AsInteger() : 0);
+            return TJS_S_OK;
+        });
+    tTJSVariant method_value(method);
+    method->Release();
+    check(TJS_SUCCEEDED(script_class->PropSet(TJS_MEMBERENSURE, TJS_W("exec"),
+        nullptr, &method_value, script_class)), "cannot install Scripts.exec");
+
+    // A patch class can already exist when the game's Plugins.link executes.
+    // The native registration must replace it with the numeric-language API.
+    if (game.empty())
+        exec("class CFBFSteam { function GetUserLanguage() { return 'JP'; } }");
+    if (!game.empty() && std::filesystem::exists(game / "patch.tjs")) {
+        std::ifstream input(game / "patch.tjs", std::ios::binary);
+        std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(input)), {});
+        std::string text, error;
+        check(krkrvita::decode_kirikiri_text(bytes, text, &error),
+              "cannot decode local patch.tjs");
+        execute_named(text, "patch.tjs");
+    }
+    bool recovered = false;
+    const bool original_succeeded = krkrvita::execute_yuri_startup(
+        [&] { execute_named(startup, "startup.tjs"); },
+        [] { return true; }, [&] { recovered = true; });
+    check(original_succeeded && !recovered,
+          "SeaBed startup used KAG recovery after an earlier failure");
+    require("FBFSteam !== null", "startup left FBFSteam null");
+    require("registeredHandlers.count == 1 && initializedStorages.count == 1",
+            "startup did not reach callback registration and KAG initialization");
+    require("initializedStorages[0] == 'system/Initialize.tjs'",
+            "unexpected KAG initialization entry point");
+    require("FBFSteam.GetUserLanguage() === 1", "Japanese language is not numeric");
+    exec("var savedSteamClass=CFBFSteam, savedSteamObject=FBFSteam;"
+         "Plugins.link('plugin/FBFSTEAMPLUGIN.DLL');");
+    require("CFBFSteam === savedSteamClass && FBFSteam === savedSteamObject",
+            "relinking replaced live Steam objects");
+    require("FBFSteam.InitSteamAPI() == false && FBFSteam.UploadStats() == false",
+            "offline module claimed a Steam connection or upload");
+    exec("FBFSteam.ResetAllStats(); FBFSteam.UnlockAchievement(0);"
+         "FBFSteam.UnlockAchievement(42); FBFSteam.ShutDownSteamAPI();"
+         "FBFSteam.ShutDownSteamAPI(); registeredHandlers[0]();");
+    require("kag.updateCount == 1", "real startup callback did not update KAG");
+
+    const auto wide = utf8_converter().from_bytes(first);
+    tTJSVariant inline_text(ttstr(reinterpret_cast<const tjs_char*>(wide.c_str())));
+    auto* global = script_engine->GetGlobalNoAddRef();
+    global->PropSet(TJS_MEMBERENSURE, TJS_W("inlineText"), nullptr,
+                    &inline_text, global);
+    for (const auto* language : {"ja_jp", "en_us", "fr_fr", "ja-JP"}) {
+        platform_language = language;
+        exec("delete sf.textfade; kag.onConductorScript(inlineText, 'first.ks', 23);");
+        require(language[0] == 'j' ? "sf.fbflang === 1" : "sf.fbflang === 0",
+                "real first.ks selected the wrong language");
+        require("sf.textfade === 1", "first.ks did not complete language setup");
+    }
+    exec("sf.fbflang=7; kag.onConductorScript(inlineText, 'first.ks', 23);");
+    require("sf.fbflang === 7", "startup changed an existing language preference");
+    exec("var rejected=false; try { Plugins.link('unknown.dll'); }"
+         "catch(e) { rejected=true; }");
+    require("rejected", "unknown DLL was silently accepted");
+    check(TVPRegisteredPlugins.count(TJS_W("fbfsteamplugin.dll")) == 1,
+          "FBFSteam module was not entered into the Vita registry");
+    check(std::count(boot_traces.begin(), boot_traces.end(),
+                     "retail-fbfsteam-offline-ready") == 1,
+          "FBFSteam registration did not run exactly once");
+
+    // Negative control: exercise Vita's real recovery policy, then prove the
+    // resulting null access remains visible rather than passing the probe.
+    recovered = false;
+    check(!krkrvita::execute_yuri_startup([&] {
+        execute_named("global.FBFSteam=null; Plugins.link('missing.dll');",
+                      "broken-startup.tjs");
+    }, [] { return true; }, [&] { recovered = true; }),
+          "broken startup was reported as successful");
+    check(recovered, "missing plugin did not enter KAG recovery");
+    bool null_failed = false;
+    exec("delete sf.textfade;");
+    try { execute_named(first, "first.ks"); }
+    catch (const eTJS&) { null_failed = true; }
+    check(null_failed, "negative control did not reproduce null-object failure");
+    bool propagated = false;
+    recovered = false;
+    try {
+        krkrvita::execute_yuri_startup([] { throw std::runtime_error("startup"); },
+            [] { return false; }, [&] { recovered = true; });
+    } catch (const std::runtime_error&) { propagated = true; }
+    check(propagated && !recovered,
+          "startup swallowed an error when Initialize.tjs was unavailable");
+    std::cout << "FBFSteam offline execution: startup, native link, relink, "
+                 "callback, language branches, saved preference and negative "
+                 "recovery control passed (window/render boundaries instrumented)\n";
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
     static_assert(sizeof(tjs_char) == sizeof(char16_t));
 
     const auto release_tjs = [](TJS::tTJS* engine) {
@@ -278,6 +533,10 @@ var krkrvitaProbeLayer = new Layer(void, void);
 )TJS");
 
     ncbAutoRegister::AllRegist();
+
+    check(argc == 1 || (argc == 3 && std::string(argv[1]) == "--seabed"),
+          "usage: plugin-registry-test [--seabed GAME_DIR]");
+    test_fbfsteam(argc == 3 ? std::filesystem::path(argv[2]) : std::filesystem::path());
 
     // Names arrive from scripts exactly as the retail source spells them.
     link_plugin(u"motionplayer.dll", "motionplayer.dll did not link");

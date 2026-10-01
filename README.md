@@ -70,3 +70,8 @@ bind.triangle=mouse_wheel_up
 
 If startup fails, read `ux0:data/krkrvita/error.txt`. Progress diagnostics are
 written to `ux0:data/krkrvita/boot-status.txt`.
+
+`FBFSteamPlugin.dll` has offline compatibility support for games such as
+SeaBed. Language selection follows the engine locale (currently Japanese on
+Vita); Steam login, overlays, achievement synchronization and stat uploads
+are unavailable. Initialization and upload calls report that Steam is offline.

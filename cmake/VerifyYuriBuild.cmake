@@ -1055,6 +1055,9 @@ require_text("${GENERATED_DIR}/tjs2/tjsConfig.cpp"
     "if (!buf) return;"
     "TJS_free preserves the free(nullptr) contract")
 require_text("${GENERATED_DIR}/PluginImpl.cpp"
+    "krkrvita::load_yuri_plugin(name)"
+    "Vita Plugins.link uses the host-tested checked loader")
+require_text("${SOURCE_DIR}/include/krkrvita/yuri_checked_plugin_loader.hpp"
     "TVPThrowExceptionMessage(TVPCannotLoadPlugin, name)"
     "unsupported retail DLL requests fail instead of becoming silent no-ops")
 require_text("${GENERATED_DIR}/PluginImpl.cpp"
@@ -1066,12 +1069,15 @@ require_text("${GENERATED_DIR}/PluginImpl.cpp"
 require_text("${GENERATED_DIR}/PluginImpl.cpp"
     "filename.length() >= 4"
     "short plugin filenames cannot underflow the extension check")
-require_text("${GENERATED_DIR}/PluginImpl.cpp"
+require_text("${SOURCE_DIR}/include/krkrvita/yuri_checked_plugin_loader.hpp"
     "KRKRVITA_YURI_INTEGRATED_PLUGIN_MODULES"
     "the Vita loader and host compatibility audit share one plugin inventory")
 require_text("${GENERATED_DIR}/PluginImpl.cpp"
     "krkrvita/yuri_plugin_capabilities.hpp"
     "the generated sealed loader consumes the capability inventory")
+require_text("${GENERATED_DIR}/ScriptMgnIntf.cpp"
+    "krkrvita::execute_yuri_startup"
+    "Vita and host probes share startup failure recovery")
 require_text("${SOURCE_DIR}/include/krkrvita/yuri_plugin_capabilities.hpp"
     "X(\"fstat.dll\")"
     "the compatibility inventory exposes the real fstat implementation")
@@ -1577,10 +1583,10 @@ require_text("${SOURCE_DIR}/src/engine/retail/yuri_sqlite_module.cpp"
 require_text("${COMPILE_COMMANDS}"
     "src/engine/retail/yuri_sqlite_module.cpp"
     "the SQLite compatibility implementation is compiled into the Vita backend")
-require_text("${GENERATED_DIR}/PluginImpl.cpp"
+require_text("${SOURCE_DIR}/include/krkrvita/yuri_checked_plugin_loader.hpp"
     "TJS_W(\"krmovie.dll\")"
     "the Yuri core movie-loader alias is accepted during KAG startup")
-require_text("${GENERATED_DIR}/PluginImpl.cpp"
+require_text("${SOURCE_DIR}/include/krkrvita/yuri_checked_plugin_loader.hpp"
     "retail-krmovie-core-alias-ready"
     "the core movie-loader alias is observable on hardware")
 require_text("${SOURCE_DIR}/src/platform/vita/yuri_video_overlay.cpp"

@@ -17,6 +17,7 @@
     X("squirrel.dll")
 
 #define KRKRVITA_YURI_INTERNAL_PLUGIN_MODULES(X) \
+    X("fbfsteamplugin.dll")                         \
     X("addfont.dll")                                \
     X("csvparser.dll")                              \
     X("dirlist.dll")                                \
@@ -85,6 +86,8 @@ struct YuriPluginSurfaceContract {
 
 inline constexpr auto yuri_plugin_surface_contracts = std::array{
     YuriPluginSurfaceContract{
+        "fbfsteamplugin.dll", {"fbfsteam.", "cfbfsteam", "", ""}},
+    YuriPluginSurfaceContract{
         "motionplayer.dll", {"motion.", "motionaffinesourcelayer", "motion_", ""}},
     YuriPluginSurfaceContract{
         "emoteplayer.dll", {"emote.", "emoteplayer", "emote_", ""}},
@@ -120,7 +123,8 @@ constexpr const YuriPluginSurfaceContract* yuri_plugin_surface_contract(
 // even when the proprietary pixel/audio implementation is a fallback.  A
 // load-only module such as krflash intentionally returns false.
 constexpr bool yuri_plugin_has_script_surface(std::string_view module) {
-    return module == "motionplayer.dll" || module == "gfxeffect.dll" ||
+    return module == "fbfsteamplugin.dll" ||
+           module == "motionplayer.dll" || module == "gfxeffect.dll" ||
            module == "layerexdraw.dll" || module == "scriptsex.dll";
 }
 
@@ -146,6 +150,10 @@ enum class YuriPluginFidelity {
 constexpr YuriPluginFidelity yuri_plugin_fidelity(std::string_view module) {
     if (!yuri_plugin_link_is_supported(module))
         return YuriPluginFidelity::unsupported;
+    // Offline support: real locale-based language selection, callable Steam
+    // lifecycle/achievement methods, but no Steam connection or stat uploads.
+    if (module == "fbfsteamplugin.dll")
+        return YuriPluginFidelity::behavioral_subset;
     // krflash never plays Flash; the link exists only so startup continues.
     if (module == "krflash.dll") return YuriPluginFidelity::link_only;
     // gfxEffect keeps gfxFire's state and call surface; the fire kernel is a
