@@ -5585,7 +5585,8 @@ static void TVPInitRippleTransformFuncs()
         VERBATIM
     )
 
-    vita_create_self(krkrvita-yuri.self krkrvita-yuri)
+    # The shader compiler lives on ur0:, outside safe homebrew's sandbox.
+    vita_create_self(krkrvita-yuri.self krkrvita-yuri UNSAFE)
 
     if(NOT EXISTS "${KRKRVITA_PATCH_SOURCE_DIR}/patch/alldata.js")
         message(FATAL_ERROR "Pinned Kirikiroid2 patch snapshot is incomplete")
@@ -5615,7 +5616,7 @@ static void TVPInitRippleTransformFuncs()
     # all set this exact field explicitly.
     set(VITA_MKSFOEX_FLAGS "-d ATTRIBUTE2=12")
     vita_create_vpk(krkrvita-yuri.vpk KRVITA001 krkrvita-yuri.self
-        VERSION 00.01
+        VERSION 00.02
         NAME "Kirikiri Vita"
         FILE "${CMAKE_CURRENT_SOURCE_DIR}/resources/vita/sce_sys/icon0.png"
              sce_sys/icon0.png

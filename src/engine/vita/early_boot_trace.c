@@ -48,6 +48,8 @@ void krkrvita_write_error(const char *message)
 
 static void krkrvita_preinit_trace(void)
 {
+	sceIoRemove(k_error_path);
+	sceIoRemove(k_error_fallback_path);
 	write_text(k_boot_trace_path, k_boot_trace_fallback_path,
 		"preinit-entered", SCE_O_TRUNC);
 }

@@ -2,7 +2,9 @@
 
 ## Install and play
 
-1. Install the latest `krkrvita-yuri.vpk` with VitaShell.
+1. Enable **Unsafe Homebrew** in **Settings → HENkaku Settings**, then install
+   the latest `krkrvita-yuri.vpk` with VitaShell. Extended permissions are
+   required to access the shader compiler on `ur0:`.
 2. Install `libshacccg.suprx` using an installer such as ShaRKBR33D.
 3. Create this directory layout on the Vita memory card:
 

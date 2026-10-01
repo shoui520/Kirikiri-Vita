@@ -52,6 +52,32 @@ file(SIZE "${VERIFY_DIR}/eboot.bin" eboot_size)
 if(eboot_size LESS 1000000)
     message(FATAL_ERROR "VPK eboot.bin is unexpectedly small")
 endif()
+
+# Resolve the SELF app-info offset instead of assuming a fixed header size.
+# Safe homebrew cannot access the shader compiler installed on ur0:.
+file(READ "${VERIFY_DIR}/eboot.bin" self_magic OFFSET 0 LIMIT 4 HEX)
+if(NOT self_magic STREQUAL "53434500")
+    message(FATAL_ERROR "VPK eboot.bin is not a SELF executable")
+endif()
+file(READ "${VERIFY_DIR}/eboot.bin" appinfo_offset_hex
+    OFFSET 56 LIMIT 8 HEX)
+set(appinfo_offset 0)
+foreach(byte_index RANGE 0 7)
+    math(EXPR hex_offset "${byte_index} * 2")
+    string(SUBSTRING "${appinfo_offset_hex}" ${hex_offset} 2 byte_hex)
+    math(EXPR appinfo_offset
+        "${appinfo_offset} | (0x${byte_hex} << (${byte_index} * 8))")
+endforeach()
+math(EXPR last_appinfo_offset "${eboot_size} - 8")
+if(appinfo_offset LESS 128 OR appinfo_offset GREATER last_appinfo_offset)
+    message(FATAL_ERROR "VPK SELF app-info offset is invalid")
+endif()
+file(READ "${VERIFY_DIR}/eboot.bin" self_authid
+    OFFSET ${appinfo_offset} LIMIT 8 HEX)
+if(NOT self_authid STREQUAL "010000000000002f")
+    message(FATAL_ERROR
+        "VPK must use UNSAFE homebrew permissions for ur0: shader access")
+endif()
 file(SIZE "${VERIFY_DIR}/krkrvita/patches/patches.zip" patch_bundle_size)
 if(patch_bundle_size LESS 10000000)
     message(FATAL_ERROR "Embedded retail patch bundle is unexpectedly small")
@@ -154,4 +180,4 @@ endif()
 
 file(REMOVE_RECURSE "${VERIFY_DIR}")
 message(STATUS
-    "VPK identity, ATTRIBUTE2=12, assets, and retail-patch contracts passed")
+    "VPK identity, UNSAFE permissions, ATTRIBUTE2=12, assets, and retail-patch contracts passed")

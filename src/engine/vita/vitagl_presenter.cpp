@@ -111,9 +111,22 @@ void delete_texture_set(
 }
 
 bool shader_compiler_available() {
+    constexpr const char* paths[] = {
+        "ur0:/data/libshacccg.suprx",
+        "ur0:data/external/libshacccg.suprx"
+    };
     SceIoStat status{};
-    return sceIoGetstat("ur0:/data/libshacccg.suprx", &status) >= 0 ||
-           sceIoGetstat("ur0:data/external/libshacccg.suprx", &status) >= 0;
+    bool available = false;
+    for (const char* path : paths) {
+        const int result = sceIoGetstat(path, &status);
+        char trace[160];
+        std::snprintf(trace, sizeof trace,
+                      "shader-compiler-stat path=%s result=0x%08x",
+                      path, static_cast<unsigned int>(result));
+        krkrvita_boot_trace(trace);
+        available = available || result >= 0;
+    }
+    return available;
 }
 
 void configure_2d() {
@@ -363,7 +376,9 @@ bool krkrvita_vitagl_initialize() {
     krkrvita_boot_trace("vitagl-init-entered");
     if (!shader_compiler_available()) {
         krkrvita_report_launch_error(
-            "VitaGL requires ur0:/data/libshacccg.suprx. Install it with "
+            "Cannot access libshacccg.suprx in ur0:/data/ or ur0:data/external/. "
+            "Check boot-status.txt for file-access error codes. Enable unsafe "
+            "homebrew in HENkaku Settings and install the shader compiler with "
             "ShaRKBR33D or VitaDB Downloader, then launch Kirikiri Vita again.");
         return false;
     }

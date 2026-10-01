@@ -1,9 +1,16 @@
 cmake_minimum_required(VERSION 3.20)
-project(krkrvita VERSION 0.1.0 LANGUAGES C CXX)
+project(krkrvita VERSION 0.1.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+if(VITA)
+    # Keep developer paths out of runtime assertions and release binaries.
+    add_compile_options(
+        "-ffile-prefix-map=${CMAKE_SOURCE_DIR}=."
+        "-ffile-prefix-map=${CMAKE_BINARY_DIR}=./build")
+endif()
 
 option(KRKRVITA_BUILD_TESTS "Build host-side tests" ON)
 option(KRKRVITA_ENABLE_OPENGL_COMPOSITOR
